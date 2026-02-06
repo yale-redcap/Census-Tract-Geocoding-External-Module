@@ -10,9 +10,50 @@ $(document).ready(() => {
 	const latitudeField  = fields['latitudeField'];
 	const longitudeField = fields['longitudeField'];
 
+    const addGeoCodeButton = fields['addGeoCodeButton'];
+    const matchedAddressField = fields['matchedAddressField'];
+    const benchmarkVintageField = fields['benchmarkVintageField'];
+
 	const urls              = module.tt('urls');
 	const getAddressUrl     = urls['getAddressUrl'];
 	const getCoordinatesUrl = urls['getCoordinatesUrl'];
+
+    /**
+     * Injects a bootstrap-styled Geocode Button below the address input element
+     * 
+     * @returns 
+     */
+    function injectGeobutton() {
+
+        if (!addGeoCodeButton) {
+            return;
+        }
+
+        const $addressField = $(`[name="${addressField}"]`);
+
+        if ($addressField.length === 0) {
+            return;
+        }
+
+        const $geoCodeButton = $(`
+            <div id="census-geocode-button-container" style="display: inline-block; width: 100%;">
+                <button type="button" 
+                    id="census-geocode-button" 
+                    class="btn btn-secondary" 
+                    style="margin-left: 0; margin-top: 5px; font-size: 0.9em;"
+                    title="Click to geocode the address and populate the corresponding fields with Census data">
+                    <i class="fas fa-map-marker-alt"></i> Geocode Address
+                </button>
+            </div>
+        `);
+
+        $addressField.parent().after($geoCodeButton);
+
+        $geoCodeButton.on('click', function() {
+            console.log('Geocode button clicked', $addressField.val());
+            for(const census of censuses) { downloadCensusData(census); }
+        });
+    }
 
 	function downloadCensusData(census) {
 		// part out fields from census
@@ -44,6 +85,7 @@ $(document).ready(() => {
 					console.log('TigerWeb lookup data present');
 
 					census['lookupTable'] = data['result']['addressMatches'][0]['geographies'];
+                    census['matchedAddress'] = data['result']['addressMatches'][0]['matchedAddress'];
 					processCensusData(census);
 				}
 			});
@@ -103,6 +145,18 @@ $(document).ready(() => {
 		let mappings          = census.mappings;
 		var sortedGeographies = sortKeysByValue(lookupTable);
 
+        // Set matched address field if applicable
+        const $matchedAddressFieldElement = $(`[name="${matchedAddressField}"]`);
+        if ($matchedAddressFieldElement.length && census.matchedAddress) {
+            $matchedAddressFieldElement.val(census.matchedAddress).change();
+        }
+
+        // set benchmark vintage field if applicable
+        const $benchmarkVintageFieldElement = $(`[name="${benchmarkVintageField}"]`);
+        if ($benchmarkVintageFieldElement.length) {
+            $benchmarkVintageFieldElement.val(census.benchmark_vintage).change();
+        }
+
 		for (const mapping of mappings) {
 			let value = '';
 
@@ -136,6 +190,8 @@ $(document).ready(() => {
 			console.log('Looking up Census data');
 			for(const census of censuses) { downloadCensusData(census); }
 		});
+
+        injectGeobutton();
 	}
 
 	if (latitudeField && longitudeField) {

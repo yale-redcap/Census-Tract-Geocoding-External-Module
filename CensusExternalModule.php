@@ -17,9 +17,20 @@ class CensusExternalModule extends AbstractExternalModule
 	}
 
 	function redcap_module_configuration_settings($project_id, $settings): array {
-		$combo_choices = $this->generateBenchmarkVintageChoices();
 
-		$census_idx = array_search("censuses", array_column($settings, "key"));
+        if ( !$project_id ) {
+            // We're on the system settings
+            return $settings;
+        }
+
+		$census_idx = array_search("censuses", array_column($settings, "key")) ?? null;
+
+        if ($census_idx === null) {
+            return $settings;
+        }
+
+		$combo_choices = $this->generateBenchmarkVintageChoices();
+        
 		$bv_idx = array_search("benchmark_vintage", array_column($settings[$census_idx]["sub_settings"], "key"));
 
 		$settings[$census_idx]["sub_settings"][$bv_idx]["choices"] = $combo_choices;
@@ -157,7 +168,10 @@ class CensusExternalModule extends AbstractExternalModule
 		$fields = [
 			"addressField" => $this->getProjectSetting('address'),
 			"latitudeField" => $this->getProjectSetting('latitude'),
-			"longitudeField" => $this->getProjectSetting('longitude')
+			"longitudeField" => $this->getProjectSetting('longitude'),
+            "matchedAddressField" => $this->getProjectSetting('matched_address_field'),
+            "benchmarkVintageField" => $this->getProjectSetting('benchmark_vintage_field'),
+            "addGeoCodeButton" => $this->getProjectSetting('add_geocode_button')
 		];
 		$this->tt_addToJavascriptModuleObject("fields", $fields);
 
