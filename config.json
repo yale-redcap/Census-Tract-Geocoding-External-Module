@@ -1,6 +1,8 @@
 {
 	"name": "Census Geocoder",
 
+    "prefix": "census_geocoder",
+
 	"namespace": "Vanderbilt\\CensusExternalModule",
 
 	"framework-version": 16,
