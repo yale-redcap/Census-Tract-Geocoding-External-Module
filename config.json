@@ -7,6 +7,8 @@
 
 	"framework-version": 16,
 
+    "version": "2.0.1",
+
 	"description": "This module converts an address to a host of information about the address, available via a project link.",
 	
     "authors": [
@@ -83,8 +85,8 @@
             "autocomplete": false
 		},
         {
-            "key": "matched_address_field",
-            "name": "Field to Populate with the Matched Address used for Geocoding",
+            "key": "geocode_report",
+            "name": "Field to Populate with a geocoding summary report",
             "required": false,
             "type": "field-list",
             "repeatable": false,
@@ -94,14 +96,6 @@
                 "op": "<>",
                 "value": ""
             }
-        },
-        {
-            "key": "benchmark_vintage_field",
-            "name": "Field to populate with the Census Benchmark and Vintage used for Geocoding",
-            "required": false,
-            "type": "field-list",
-            "repeatable": false,
-            "autocomplete": false
         },
 		{
 			"key": "censuses",

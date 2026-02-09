@@ -1,6 +1,9 @@
 <?php
 
 if ($_POST['get']) {
+
+    //throw new Exception("This endpoint is for POST requests only.");
+    
 	## Remove any characters that aren't a-z, 0-9, " ", or "," from the address string to prevent
 	## sending any malformed requests
 	$address = urlencode(preg_replace("/[^a-zA-Z0-9 ,]/","",$_POST['address']));
