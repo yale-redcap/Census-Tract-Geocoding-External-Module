@@ -170,6 +170,7 @@ class CensusExternalModule extends AbstractExternalModule
 			"latitudeField" => $this->getProjectSetting('latitude'),
 			"longitudeField" => $this->getProjectSetting('longitude'),
             "geocodeReportField" => $this->getProjectSetting('geocode_report'),
+            "geocodeMatchResultField" => $this->getProjectSetting('geocode_match_result'),
             "addGeoCodeButton" => $this->getProjectSetting('add_geocode_button')
 		];
 		$this->tt_addToJavascriptModuleObject("fields", $fields);

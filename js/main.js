@@ -11,20 +11,23 @@ $(document).ready(() => {
 	const longitudeField = fields['longitudeField'];
 
     const addGeoCodeButton = fields['addGeoCodeButton'];
+    const geocodeMatchResultField = fields['geocodeMatchResultField'];
     const geocodeReportField = fields['geocodeReportField'];
 
 	const urls              = module.tt('urls');
 	const getAddressUrl     = urls['getAddressUrl'];
 	const getCoordinatesUrl = urls['getCoordinatesUrl'];
 
-    const mappedFields = getMappedFieldsObject();
+    // build the geocodeData object, which contains all REDCap field names mapped to census data across the censuses processed, 
+    const geocodeData = getgeocodeDataObject();
 
+    // initialize the geocode report object, which will be updated with details about the geocoding process and result across the censuses processed
     const geocodeReport = getGeocodeReportObject();
 
     console.log('censuses:', censuses);
     console.log('fields:', fields);
     console.log('urls:', urls);
-    console.log('mappedFields:', mappedFields);
+    console.log('geocodeData:', geocodeData);
 
     function getGeocodeReportObject() {
 
@@ -32,16 +35,18 @@ $(document).ready(() => {
             matchResult: '', // summary of the geocoding result - either 'not matched', 'matched', or 'multiple matches'
             censuses: [], // list of census objects (with benchmark/vintage, matchedAddress, count of geographies) that were processed
             allMatchedAddresses: new Set(), // all addresses matched by TigerWeb
+            matchResultCode: '', // code indicating the match result for the geocoded address, e.g. 'Exact Match', 'No Match', etc. - this is determined based on the match result code(s) returned from TigerWeb for the geocoded address(es) across the censuses processed
             reportText: '' // full text of the geocode report to be injected into the UI or reported to the console
         };
     }
 
     function clearGeocodeReportObject() {
 
-        geocodeReport.matchResult = ''; // eithe 'not matched', 'matched', or 'multiple matches' - this is determined based on whether a geocoded address was returned and whether multiple matched addresses were found across the censuses processed
+        geocodeReport.matchResult = ''; // either 'not matched', 'matched', or 'multiple matches' - this is determined based on whether a geocoded address was returned and whether multiple matched addresses were found across the censuses processed
         geocodeReport.censuses = []; // for each census processed, we will store the benchmark/vintage, matched address, and count of geographies updated in the UI
         geocodeReport.allMatchedAddresses.clear(); // we will accumulate all matched addresses across all censuses processed, since only the first matched address in each census is used for geocoding
         geocodeReport.reportText = ''; // this will be the full text of the geocode report, which includes the match result summary, details for each census processed, and the list of all matched addresses - this is what gets injected into the UI or reported to the console
+        geocodeReport.matchResultCode = ''; // reset the match result code as well
     }
 
     /**
@@ -49,32 +54,34 @@ $(document).ready(() => {
      * 
      * @returns {Set} Set of unique field names mapped to be updated with census data across the censuses processed
      */
-    function getMappedFieldsObject() {
+    function getgeocodeDataObject() {
 
-        let mappedFields = new Set();
+        // store the names in a set to ensure uniqueness, since the same field might be mapped to data from multiple censuses
+        let geocodeData = new Set();
 
-        if ( geocodeReportField ) {
-            mappedFields.add(geocodeReportField);
-        }
+        // optional fields for reporting the geocoding result and match result summary
+        if ( geocodeReportField ) { geocodeData.add(geocodeReportField); }
+        if ( geocodeMatchResultField ) { geocodeData.add(geocodeMatchResultField); }
 
+        // collect the field names mapped to census data across the censuses processed
         for (const census of censuses) {
             for (const mapping of census.mappings) {
-                mappedFields.add(mapping.fields);
+                geocodeData.add(mapping.fields);
             }
         }
 
-        // build an object out of the set for easier use later
-        const mappedFieldsObject = Object.fromEntries([...mappedFields].map(field => [field, '']));
+        // build an object out of the set of mapped fields, with each field name as a key and an empty string as the initial value
+        const geocodeDataObject = Object.fromEntries([...geocodeData].map(field => [field, '']));
 
-        console.log('Mapped REDCap fields across censuses:', mappedFieldsObject);
+        console.log('Mapped REDCap fields across censuses:', geocodeDataObject);
 
-        return mappedFieldsObject;
+        return geocodeDataObject;
     }
     
-    function clearMappedFieldsObject() {
+    function cleargeocodeDataObject() {
 
-        for (const fieldName of Object.keys(mappedFields)) {
-            mappedFields[fieldName] = '';
+        for (const fieldName of Object.keys(geocodeData)) {
+            geocodeData[fieldName] = '';
         }
     }
 
@@ -117,7 +124,7 @@ $(document).ready(() => {
 
     function setMappedREDCapFieldsToEmpty() {
 
-        for (const fieldName of Object.keys(mappedFields)) {
+        for (const fieldName of Object.keys(geocodeData)) {
             const $field = $(`[name="${fieldName}"]`);
             if ($field.length) {
                 $field.val('');
@@ -186,8 +193,11 @@ $(document).ready(() => {
 
         geocodeReport.reportText = reportLines.join('\n');
 
-        // stash it in the mappedFields object so it's available for transfer to the UI when transferMappedDataToREDCapForm is called at the end of processing all censuses
-        mappedFields[geocodeReportField] = geocodeReport.reportText;
+        // stash it in the geocodeData object so it's available for transfer to the UI when transferMappedDataToREDCapForm is called at the end of processing all censuses
+        geocodeData[geocodeReportField] = geocodeReport.reportText;
+
+        // match result
+        geocodeData[geocodeMatchResultField] = geocodeReport.matchResult;
     }
 
     // updates the geocode report field in the UI with the current geocode report text - called after processing each census to update the report with the latest cumulative results
@@ -212,8 +222,11 @@ $(document).ready(() => {
      * 
      * @param {boolean} overlay    indicates whether to show a spinner overlay while processing - defaults to false
      * @param {boolean} fromClick  indicates whether this function was triggered by a click on the geocode button
+     * @param {number} api         indicates which API to use for geocoding - defaults to 1 (the address lookup API), but can be set to 2 to use the lat/long lookup API instead
+     * 
+     * @returns {Promise<void>}  Resolves when all censuses have been processed and the UI has been updated with the retrieved data and geocode report.
      */
-    async function processAllCensuses(fromClick = false) {
+    async function processAllCensuses(fromClick = false, api=1 ) {
 
         const $geoButton = $('#census-geocode-button');
 
@@ -221,7 +234,8 @@ $(document).ready(() => {
         const $spinner = $(`<i class="fas fa-spinner fa-spin geo-button-status" id="census-geocode-spinner" style="margin-left: 10px; font-size: 1.5em;" title="Please wait, processing..."></i>`);
         const $greenCheck = $(`<i class="fas fa-check geo-button-status" style="color: green; margin-left: 10px; font-size: 1.5em;" title="Success: data extracted and processed."></i>`);
         const $warningIcon = $(`<i class="fas fa-exclamation-triangle geo-button-status" style="color: orange; margin-left: 10px; font-size: 1.5em;" title="Warning: no data were retrieved."></i>`);
-        const $errorIcon = $(`<i class="fas fa-exclamation-triangle geo-button-status" style="color: red; margin-left: 10px; font-size: 1.5em;" title="Error: see console."></i>`);
+        //const $errorIcon = $(`<i class="fas fa-exclamation-triangle geo-button-status" style="color: red; margin-left: 10px; font-size: 1.5em;" title="Error: see console."></i>`);
+        const $errorIcon = $(`<i class="fas fa-skull-crossbones geo-button-status" style="color: red; margin-left: 10px; font-size: 1.5em;" title="Error: see console."></i>`);
         
         if ( !$geoButton.length ) { fromClick = false; }
 
@@ -240,7 +254,7 @@ $(document).ready(() => {
 
         // clear objects that will be populated with new data during this process
         clearGeocodeReportObject(); // clear the report object values before processing
-        clearMappedFieldsObject();  // reset the mappedFields object values to empty strings
+        cleargeocodeDataObject();  // reset the geocodeData object values to empty strings
 
         let dataRetrieved = false; // true if any geographies are retrieved from any of the censuses processed
         let resolved = false; // true if promise resolves successfully
@@ -264,7 +278,7 @@ $(document).ready(() => {
                     // break;
                 }
                 else {
-                    console.warn(`No data was retrieved for census with benchmark/vintage ${census.benchmark_vintage}`);
+                    console.warn(`No data were retrieved for census with benchmark/vintage ${census.benchmark_vintage}`);
                 }
             }
         }
@@ -293,7 +307,11 @@ $(document).ready(() => {
 
             if ( resolved ) {
 
-                transferMappedDataToREDCapForm(); // for debugging - logs the mapped fields and their values to the console
+                transferMappedDataToREDCapForm();
+
+                // log the geocode report object to the console for debugging and transparency
+                console.log('Geocoder: Final report:', geocodeReport);
+                console.log('Geocoder: Data updates:', geocodeData);
             }
         }
     }
@@ -355,7 +373,7 @@ $(document).ready(() => {
                     setGeocodeReportAllMatchedAddresses(addressMatches);
 
                     // extract data from the API geographies response for this census
-                    // extracted data are saved to the mappedFields object, and to the UI if not using the geocode button
+                    // extracted data are saved to the geocodeData object, and to the UI if not using the geocode button
                     processCensusData(census);
 
                     // resolve and indicate that data were retrieved and processed for this census
@@ -380,9 +398,9 @@ $(document).ready(() => {
 
         setMappedREDCapFieldsToEmpty(); // clear the UI, no stale data allowed
 
-        console.log('Transferring the following mapped fields to the REDCap form:', mappedFields);
+        console.log('Transferring the following mapped fields to the REDCap form:', geocodeData);
 
-        for (const [fieldName, value] of Object.entries(mappedFields)) {
+        for (const [fieldName, value] of Object.entries(geocodeData)) {
 
             const $field = $(`[name="${fieldName}"]`);
             if ($field.length && value) {
@@ -512,7 +530,7 @@ $(document).ready(() => {
 	}
 
     /**
-     * Processes the census data and updates the mappedFields object with data
+     * Processes the census data and updates the geocodeData object with data
      * 
      * Called for each census after retrieving data from the Census API.
      * 
@@ -542,7 +560,7 @@ $(document).ready(() => {
 
                 const fieldName = mapping.fields
 
-                mappedFields[fieldName] = value; // update the mappedFields object with the new value for this field - this is used to build the geocode report
+                geocodeData[fieldName] = value; // update the geocodeData object with the new value for this field - this is used to build the geocode report
 
                 // if there is no geocode button, update the UI immediately as the data is processed for each census
                 if ( !addGeoCodeButton ) {

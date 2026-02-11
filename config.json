@@ -7,7 +7,7 @@
 
 	"framework-version": 16,
 
-    "version": "2.0.1",
+    "version": "2.0.2",
 
 	"description": "This module converts an address to a host of information about the address, available via a project link.",
 	
@@ -40,9 +40,9 @@
     "links": {
         "project": [
             {
-                    "name": "Available Fields from Census Geocoder",
-                    "icon": "fas fa-file-alt",
-                    "url": "https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_attribute_glossary.html?"
+                "name": "Available Fields from Census Geocoder",
+                "icon": "fas fa-file-alt",
+                "url": "https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_attribute_glossary.html?"
             }
         ]
     },
@@ -85,8 +85,21 @@
             "autocomplete": false
 		},
         {
+            "key": "geocode_match_result",
+            "name": "Optional field to populate with a geocoding match result",
+            "required": false,
+            "type": "field-list",
+            "repeatable": false,
+            "autocomplete": false,
+            "branchingLogic": {
+                "field": "address",
+                "op": "<>",
+                "value": ""
+            }
+        },
+        {
             "key": "geocode_report",
-            "name": "Field to Populate with a geocoding summary report",
+            "name": "Optional field to populate with a geocoding summary report",
             "required": false,
             "type": "field-list",
             "repeatable": false,
@@ -119,7 +132,7 @@
 					"name": "Benchmark - Vintage",
 					"type": "dropdown",
 					"choices": [],
-                    "autocomplete": false
+                    "autocomplete": true
 				},
 				{
 					"key": "mappings",
@@ -250,13 +263,13 @@
 								{ "value": "ZCTA5", "name": "Zip Code Tabulation Area Code (Zip Code Tabulation Area Code)" },
 								{ "value": "ZIP", "name": "ZIP Code (ZIP Code)" }
 							],
-                            "autocomplete": false
+                            "autocomplete": true
 						},
 						{
 							"key": "fields",
 							"name": "Field to Populate with Corresponding Data Key",
 							"type": "field-list",
-                            "autocomplete": false
+                            "autocomplete": true
 						}
 					]
 				}
