@@ -1,5 +1,6 @@
 <?php namespace Vanderbilt\CensusExternalModule;
 
+use Exception;
 use ExternalModules\AbstractExternalModule;
 use ExternalModules\ExternalModules;
 
@@ -9,11 +10,23 @@ class CensusExternalModule extends AbstractExternalModule
 	const VINTAGES_URL = "https://geocoding.geo.census.gov/geocoder/vintages?benchmark=";
 
 	function redcap_survey_page($project_id, $record, $instrument, $event_id, $group_id, $survey_hash, $response_id) {
-		$this->addScript($project_id, $record, $instrument, $event_id, $group_id, $survey_hash, $response_id);
+
+        if ( ($confirmationObject = $this->getConfirmationObject($instrument)) === null ) {
+            // This survey does not contain any of the fields specified in the EM settings, so do not add the script
+            return;
+        }
+
+		$this->addScript($project_id, $record, $instrument, $event_id, $group_id, $survey_hash, $response_id, $confirmationObject, true);
 	}
 
 	function redcap_data_entry_form($project_id, $record, $instrument, $event_id, $group_id, $survey_hash = null, $response_id = null) {
-		$this->addScript($project_id, $record, $instrument, $event_id, $group_id);
+
+        if ( ($confirmationObject = $this->getConfirmationObject($instrument)) === null ) {
+            // This form does not contain any of the fields specified in the EM settings, so do not add the script
+            return;
+        }
+
+		$this->addScript($project_id, $record, $instrument, $event_id, $group_id, $survey_hash, $response_id, $confirmationObject, false);
 	}
 
 	function redcap_module_configuration_settings($project_id, $settings): array {
@@ -157,7 +170,139 @@ class CensusExternalModule extends AbstractExternalModule
 		return "benchmark={$benchmark}&vintage={$vintage}&format=json";
 	}
 
-	function addScript($project_id, $record, $instrument, $event_id, $group_id, $survey_hash = null, $response_id = null) {
+    /**
+     * Since this function is called on every data entry and survey page,
+     * we want a graceful and informative failure if upstream changes cause throwable errors.
+     * 
+     * @param string $form_name
+     * @return array
+     */
+    public function getConfirmationObject($form_name) {
+
+        try {
+
+            return $this->getConfirmationObject_exec($form_name);
+
+        } catch (\Throwable $e) {
+
+            error_log("Census Geocoder EM failed: " . $e->getMessage());
+
+            return [
+                "execution_failure" => 1,
+                "form_confirmed" => 0,
+                "message" => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Returns a 'form confirmation object' that indicates whether the geocoder
+     * should be loaded on the calling data entry form or survey.
+     * 
+     * Returns null if no EM fields are found on the form, to indicate that the geocoder should not be loaded.
+     * 
+     * Otherwise returns details on which EM fields were found and not found on the form, to assist with debugging EM configuration issues.
+     * 
+     * If the form is confirmed (all EM fields located on it), returns the name of the field that the geocode button should be anchored to. 
+     * This will be the last input field (address, latitude, or longitude) found on the form, based on the current configuration. 
+     * 
+     * @param mixed $form_name 
+     * @return mixed
+     * @throws Exception 
+     */
+    private function getConfirmationObject_exec( $form_name ) {
+
+        global $Proj;
+
+        $form_fields = array_keys($Proj->forms[$form_name]['fields']);
+
+        $inputFields = [
+			$this->getProjectSetting('address'),
+			$this->getProjectSetting('latitude'),
+			$this->getProjectSetting('longitude')
+        ];
+
+        $outputFields = [
+            $this->getProjectSetting('geocode_match_result'),
+            $this->getProjectSetting('geocode_report')
+        ];
+
+        $fields_on_form = [];
+        $fields_not_on_form = [];
+        $buttonAnchorField = null;
+
+        $censuses = $this->getCensuses();
+
+        foreach ($censuses as $census) {
+
+            foreach ($census['mappings'] as $mapping) {
+
+                $field_name = $mapping['fields'];
+
+                if ( $field_name && !in_array($field_name, $outputFields) ) { $outputFields[] = $field_name; }
+            }
+        }
+
+        $form_confirmed = 1;
+        $buttonAnchorField = null;
+
+        $message = "";
+
+        // iterate over input and output fields
+        foreach ( array_merge($inputFields, $outputFields) as $field ) {
+
+            if ( in_array($field, $form_fields) ) { 
+                $fields_on_form[] = $field; 
+            }
+            else { $fields_not_on_form[] = $field; }
+        }
+
+        if ( count($fields_on_form) === 0 ) {
+
+            return null; // no fields found, so return null to indicate that the script should not be added to the page
+        }
+        else {
+
+            $form_confirmed = ( count($fields_not_on_form) === 0 ) ? 1 : 0;
+        }
+
+        if ( $form_confirmed ) {
+
+            $message = "All Census Geocoder EM fields were found on the form {$form_name}. Geocoder will be loaded.";
+
+            // now determine the button anchor field, which will be the last input field (address, latitude, or longitude) found on the form
+            $i = count($inputFields);
+            foreach ( $form_fields as $form_field ) {
+
+                if ( in_array($form_field, $inputFields) ) {
+
+                    $buttonAnchorField = $form_field;
+
+                    if ( --$i === 0 ) { break; }
+                }
+            }
+        }
+        // return a message indicating which fields are missing
+        else {
+
+            $message = "The following fields are missing on the form {$form_name}:\n" 
+                . implode("\n", $fields_not_on_form)
+                . "\n\nPlease reconfigure the Census Geocoder EM settings to ensure that all fields (input and output) are located on the same form."
+                . "\n\nGeocoder will not be loaded.";
+        }
+
+        return [
+            "execution_failure" => 0,
+            "form_confirmed" => $form_confirmed,
+            "message" => $message,
+            "buttonAnchorField" => $buttonAnchorField,
+            "fields_on_form" => $fields_on_form,
+            "fields_not_on_form" => $fields_not_on_form
+        ];
+    }
+
+	function addScript($project_id, $record, $instrument, $event_id, $group_id, $survey_hash = null, $response_id = null, $confirmationObject = null, $isSurvey = false) {
+
 		if (!$project_id) { return; }
 		$this->initializeJavascriptModuleObject();
 
@@ -171,7 +316,10 @@ class CensusExternalModule extends AbstractExternalModule
 			"longitudeField" => $this->getProjectSetting('longitude'),
             "geocodeReportField" => $this->getProjectSetting('geocode_report'),
             "geocodeMatchResultField" => $this->getProjectSetting('geocode_match_result'),
-            "addGeoCodeButton" => $this->getProjectSetting('add_geocode_button')
+            "addGeoCodeButton" => $this->getProjectSetting('add_geocode_button'),
+            "isSurvey" => $isSurvey,
+            "buttonAnchorField" => $confirmationObject['buttonAnchorField'] ?? null,
+            "confirmationObject" => $confirmationObject
 		];
 		$this->tt_addToJavascriptModuleObject("fields", $fields);
 
@@ -183,6 +331,14 @@ class CensusExternalModule extends AbstractExternalModule
 
 		echo '<script src="https://cdn.jsdelivr.net/npm/gasparesganga-jquery-loading-overlay@2.1.0/dist/loadingoverlay.min.js" integrity="sha384-MySkuCDi7dqpbJ9gSTKmmDIdrzNbnjT6QZ5cAgqdf1PeAYvSUde3uP8MGnBzuhUx"
 				crossorigin="anonymous"></script>';
+
+		echo <<<STYLETEXT
+        <style>
+            .geocode-input-missing {
+                border: 2px solid red;
+            }
+        </style>
+        STYLETEXT;
 
 		echo "<script src='" . $this->getUrl("js/main.js") . "'></script>";
 	}

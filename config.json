@@ -61,12 +61,14 @@
             "name": "Add a button after the Full Address field to trigger geocoding",
             "required": false,
             "type": "checkbox",
-            "repeatable": false,
-            "branchingLogic": {
-                "field": "address",
-                "op": "<>",
-                "value": ""
-            }
+            "repeatable": false
+        },
+        {
+            "key": "suppress_geocode_on_survey",
+            "name": "Suppress real time geocoding on survey pages",
+            "required": false,
+            "type": "checkbox",
+            "repeatable": false
         },
         {
 			"key": "latitude",
