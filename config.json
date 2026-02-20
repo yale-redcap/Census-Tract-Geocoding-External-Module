@@ -48,6 +48,11 @@
     },
 
 	"project-settings": [
+        {
+            "key": "inputs-header",
+            "type": "descriptive",
+            "name": "<h5>Address and Location Fields</h5><p>These REDCap fields will be used in the Census geocode API calls to fetch geocoding data. If an address match fails or an address is not available, a match by location (latitude and longitude) can be attempted.</p><p><strong>Note: all REDCap fields configured for this module must be on the same REDCap form.</strong></p>"
+        },
 		{
 			"key": "address",
 			"name": "Field Containing the Full Address",
@@ -57,8 +62,29 @@
             "autocomplete": false
 		},
         {
+			"key": "latitude",
+			"name": "Optional field Containing the Latitude (if address not found)",
+			"required": false,
+			"type": "field-list",
+			"repeatable": false,
+            "autocomplete": false
+		},
+		{
+			"key": "longitude",
+			"name": "Optional field Containing the Longitude (if address not found)",
+			"required": false,
+			"type": "field-list",
+			"repeatable": false,
+            "autocomplete": false
+		},
+        {
+            "key": "ui-options-header",
+            "type": "descriptive",
+            "name": "<h5>User Interface Options</h5><p>By default, geocoding will occur in real time as data (address, latitude, longitude) are entered or edited. You may elect to to trigger geocoding manually using a button instead. You may also choose to suppress real-time geocoding on survey pages.</p>"
+        },
+        {
             "key": "add_geocode_button",
-            "name": "Add a button after the Full Address field to trigger geocoding",
+            "name": "Add button(s) to trigger geocoding",
             "required": false,
             "type": "checkbox",
             "repeatable": false
@@ -71,24 +97,13 @@
             "repeatable": false
         },
         {
-			"key": "latitude",
-			"name": "Field Containing the Latitude (if address not found)",
-			"required": false,
-			"type": "field-list",
-			"repeatable": false,
-            "autocomplete": false
-		},
-		{
-			"key": "longitude",
-			"name": "Field Containing the Longitude (if address not found)",
-			"required": false,
-			"type": "field-list",
-			"repeatable": false,
-            "autocomplete": false
-		},
+            "key": "geocode-summary-fields-header",
+            "type": "descriptive",
+            "name": "<h5>Geocode Summary Fields</h5><p>Implementing these optional fields will allow you to track geocoding results, and will help resolve address match failures.</p>"
+        },
         {
             "key": "geocode_match_result",
-            "name": "Optional field to populate with a geocoding match result",
+            "name": "Optional text field to populate with a geocoding match result (matched/not matched/multiple matches)",
             "required": false,
             "type": "field-list",
             "repeatable": false,
@@ -101,7 +116,7 @@
         },
         {
             "key": "geocode_report",
-            "name": "Optional field to populate with a geocoding summary report",
+            "name": "Optional notes/paragraph field to populate with a geocoding summary report",
             "required": false,
             "type": "field-list",
             "repeatable": false,
@@ -111,6 +126,11 @@
                 "op": "<>",
                 "value": ""
             }
+        },
+        {
+            "key": "census-mapping-header",
+            "type": "descriptive",
+            "name": "<h5>Census Benchmarks and Geocode Field Mapping</h5><p>For each census benchmark-vintage selection, configure the mapping of REDCap fields to available geocode (TigerWeb) fields.</p>"
         },
 		{
 			"key": "censuses",

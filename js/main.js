@@ -106,7 +106,7 @@ $(document).ready(() => {
             </div>
         `);
 
-        $buttonAnchorField.parent().after($geoCodeButton);
+        $buttonAnchorField.closest('td').append($geoCodeButton);
 
         $geoCodeButton.on('click', function() {
 
@@ -156,7 +156,7 @@ $(document).ready(() => {
         // the location geocode button is determined by the DOM order of the lat and long fields
         const $buttonAnchorField = compareDomOrder($latField[0], $longField[0]) < 0 ? $longField : $latField; 
 
-        $buttonAnchorField.parent().after($geoCodeButton);
+        $buttonAnchorField.closest('td').append($geoCodeButton);
 
         $geoCodeButton.on('click', function() {
 
