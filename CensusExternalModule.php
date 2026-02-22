@@ -1,5 +1,6 @@
 <?php namespace Vanderbilt\CensusExternalModule;
 
+use DateTimeImmutable;
 use Exception;
 use ExternalModules\AbstractExternalModule;
 use ExternalModules\ExternalModules;
@@ -8,6 +9,10 @@ class CensusExternalModule extends AbstractExternalModule
 {
 	const BENCHMARKS_URL = "https://geocoding.geo.census.gov/geocoder/benchmarks";
 	const VINTAGES_URL = "https://geocoding.geo.census.gov/geocoder/vintages?benchmark=";
+
+    const CACHE_TIMEOUT = 604800; // 604800; // 7 days in seconds
+
+    const EMLOG_BV_MESSAGE = "Benchmark and Vintage combinations";
 
 	function redcap_survey_page($project_id, $record, $instrument, $event_id, $group_id, $survey_hash, $response_id) {
 
@@ -42,22 +47,96 @@ class CensusExternalModule extends AbstractExternalModule
             return $settings;
         }
 
-		$combo_choices = $this->generateBenchmarkVintageChoices();
+        $combo_choices = null;
+        $cacheLoaded = false;
+        $apiLoaded = false;
+        $bv_cache_record = null;
+        $cacheTimeout = false;
+
+        $debug_info = "";
+
+        // fetch the cached combos first, so that later we can set up rules for API vs cache retrieval
+        $bv_cache_record = $this->fetchBenchmarkVintageChoicesFromEmLog();
+
+        if ( $bv_cache_record && isset($bv_cache_record["bv"]) && is_array($bv_cache_record["bv"]) && count($bv_cache_record["bv"]) > 0 ) {
+
+            $cache_age_seconds = $bv_cache_record['age_seconds'] ?? null;
+
+            $cacheTimeout = ( $cache_age_seconds && $cache_age_seconds > $this::CACHE_TIMEOUT );
+
+            $debug_info .= "Cache timestamp: " . $bv_cache_record["timestamp"] . "\n";
+            $debug_info .= "Database now: " . $bv_cache_record["db_now"] . "\n";
+            $debug_info .= "Database Cache age: " . $cache_age_seconds . " seconds\n";
+            $debug_info .= "Cache timeout: " . ($cacheTimeout ? "yes" : "no") . "\n";
+
+            if ( $cacheTimeout ) {
+
+                $bv_cache_record = null; // cache is too old, so ignore it
+            }
+            else {
+
+                $cacheLoaded = true;
+            }
+        }
+
+        $debug_info .= "Cache loaded: " . ($cacheLoaded ? "yes" : "no") . "\n";
+
+        // if no cache record or cache is stale, attempt to load from API
+		if (!$cacheLoaded) {
+
+			$combo_choices = $this->generateBenchmarkVintageChoices();
+
+            $apiLoaded = ( is_array($combo_choices) && count($combo_choices) > 0 );
+		}
+
+        $debug_info .= "API loaded: " . ($apiLoaded ? "yes" : "no") . "\n";
+        
+        if ( $cacheLoaded && !$apiLoaded ) {
+
+            $combo_choices = $bv_cache_record["bv"];
+        }
+
+        // one last check
+        if ( !is_array($combo_choices) || count($combo_choices) === 0 ) {
+
+            return $settings;
+        }
         
 		$bv_idx = array_search("benchmark_vintage", array_column($settings[$census_idx]["sub_settings"], "key"));
 
 		$settings[$census_idx]["sub_settings"][$bv_idx]["choices"] = $combo_choices;
 
+        if ( $apiLoaded ) {
+            
+            $log_id = $this->bv_save($combo_choices);
+            $debug_info .= "Benchmark-vintage combos saved to em_log with log_id: {$log_id}\n";
+        }
+        
+        $this->setProjectSetting("debug_text", $debug_info);
+
 		return $settings;
 	}
 
+    function redcap_module_save_configuration($project_id){
+
+        if ( !$project_id ) {
+            // We're on the system settings page
+            return;
+        }
+    }
+
 	function generateBenchmarkVintageChoices(): array {
+
 		$benchmarks_from_api = json_decode(file_get_contents($this::BENCHMARKS_URL), 1)["benchmarks"];
 
 		$combo_choices = [];
 
+        //$even = true;
 		foreach ($benchmarks_from_api as $benchmark) {
-			$vintages = [];
+
+            //$even = !$even; if ( $even ) { continue; } // just to force a "different" b-v set for testing
+
+            $vintages = [];
 			$this_benchmark_name = $benchmark["benchmarkName"];
 
 			// NOTE: this can be quite slow, if this becomes a problem consider caching and setting up a cron to refresh these
@@ -76,10 +155,83 @@ class CensusExternalModule extends AbstractExternalModule
 					$combo_choices[] = $vintage_choice;
 				}
 			}
-
 		}
+
 		return $combo_choices;
 	}
+
+    private function bv_save($combos){
+
+        $combos_json = json_encode($combos);
+        $combos_hash = hash("sha256", $combos_json);
+
+        // retrieve the most recently saved combos hash from the logs
+        $current = $this->fetchBenchmarkVintageChoicesFromEmLog();
+
+        if ( $current && $current["bv_hash"] === $combos_hash ) {
+            // the combos have not changed since the last save, so do not log them again
+            return $current["log_id"];
+        }
+
+        $log_id = $this->log( $this::EMLOG_BV_MESSAGE,
+            [
+                "bv_json" => $combos_json,
+                "bv_hash" => $combos_hash
+            ]
+        );
+
+        return $log_id;
+    }
+
+    function fetchBenchmarkVintageChoicesFromEmLog(){
+
+        $pSql = "select timestamp, now() as db_now, log_id, bv_json, bv_hash where project_id = ? and message = ? order by timestamp desc";
+        
+        $params = [
+            $this->getProjectId(),
+            $this::EMLOG_BV_MESSAGE
+        ];
+
+        $result = $this->queryLogs($pSql, $params);
+
+        if ( !$result || $result->num_rows === 0 ) {
+            return false;
+        }
+
+        $row = $result->fetch_assoc();
+        $bv_json = $row["bv_json"] ?? null;
+        $bv_hash = $row["bv_hash"] ?? null;
+
+        if ( !$bv_json || !$bv_hash ) {
+            return false;
+        }
+
+        $bv = json_decode($bv_json, true);
+
+        if ( !is_array($bv) || count($bv) === 0 ) {
+            return false;
+        }
+
+        // make sure $bv is an array of arrays with "name" and "value" keys
+        foreach ( $bv as $item ) {
+            if ( !is_array($item) || !isset($item["name"]) || !isset($item["value"]) ) {
+                return false;
+            }
+        }
+
+        $age_seconds = (new DateTimeImmutable($row["db_now"]))->getTimestamp() - (new DateTimeImmutable($row["timestamp"]))->getTimestamp();
+
+        // thus endeth the gauntlet
+        return [
+            "bv" => $bv,
+            "bv_json" => $bv_json,
+            "bv_hash" => $bv_hash,
+            "log_id" => $row["log_id"],            
+            "timestamp" => $row["timestamp"],
+            "db_now" => $row["db_now"],
+            "age_seconds" => $age_seconds
+        ];
+    }
 
 	function redcap_every_page_before_render(){
 		if(PHP_SAPI === 'cli'){
