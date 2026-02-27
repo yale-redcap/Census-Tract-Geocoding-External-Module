@@ -15,26 +15,39 @@ $(document).ready(() => {
 	const fields                    = module.tt('fields');
 	const urls                      = module.tt('urls');
 
+    // field names for the address, latitude, and longitude fields specified in the EM config
 	const addressField              = fields.addressField;
 	const latitudeField             = fields.latitudeField;
 	const longitudeField            = fields.longitudeField;
+
+    // field names for the optional geocode match result and geocode report fields specified in the EM config
     const geocodeMatchResultField   = fields.geocodeMatchResultField;
     const geocodeReportField        = fields.geocodeReportField;
 
-    const addGeoCodeButton          = fields.addGeoCodeButton;
-    const isSurvey                  = fields.isSurvey;
+    const addGeoCodeButton          = fields.addGeoCodeButton; // option to trigger geocoding via button(s) added to the UI, 
+    const addBVDropdown             = fields.addBVDropdown; // option to allow user to select additional benchmark/vintage combinations
+    const isSurvey                  = fields.isSurvey; // whether we're on a survey page 
 
-	const getAddressUrl             = urls.getAddressUrl;
-	const getCoordinatesUrl         = urls.getCoordinatesUrl;
+	const getAddressUrl             = urls.getAddressUrl; // the API endpoint for geocoding based on an address
+	const getCoordinatesUrl         = urls.getCoordinatesUrl; // the API endpoint for geocoding based on latitude and longitude
 
-    // build the global geocodeData object, which contains all REDCap field names mapped to census data across the censuses, 
+    // Build the global geocodeData object, which contains all REDCap field names mapped to census data across the censuses, 
     // along with field values that will be updated as data are extracted from the API responses and processed.
-    const geocodeData = getGeocodeDataObject();
+    const geocodeData = newGeocodeDataRecord();
 
-    // build the global geocodeReport object, which will be populated with details about the geocoding process.
-    const geocodeReport = getGeocodeReportObject();
+    // Build the global geocodeReport object, which will be populated with details about the geocoding process.
+    const geocodeReport = newGeocodeReportObject();
 
-    //console.log('censuses:', censuses);
+    // A list of all valid benchmark-vintage combinations (for the options BV dropdown).
+    const censusBenchmarks = newBenchmarkVintageList();
+
+    // A consolidated mapping of all Tiger Web attribute keys to REDCap field names across the censuses processed.
+    const geocodeFieldMappings = newGeocodeFieldMappings();
+
+    console.log('censuses:', censuses);
+    console.log('tt_censusBenchmarks', module.tt('censusBenchmarks'));
+    console.log('censusBenchmarks:', censusBenchmarks);
+    console.log('geocodeFieldMappings:', geocodeFieldMappings);
     //console.log('urls:', urls);
     //console.log('geocodeData:', geocodeData);
     //console.log('geocodeAPI:', geocodeAPI);
@@ -48,12 +61,12 @@ $(document).ready(() => {
 
     if ( addGeoCodeButton && latitudeField && longitudeField && !$('#census-geocode-location-button').length && !isSurvey ) {
 
-        injectGeocodeLocationButton(); // a button to trigger geocoding based on the lat/long field values
+        injectGeocodeLocationUIElements(); // a button to trigger geocoding based on the lat/long field values
     }
 
     if ( addGeoCodeButton && addressField && !$('#census-geocode-address-button').length && !isSurvey ) {
 
-        injectGeocodeAddressButton(); // a button to trigger geocoding based on the address field
+        injectGeocodeAddressUIElements(); // a button to trigger geocoding based on the address field
     }
 
 	if (addressField && !addGeoCodeButton) {
@@ -76,16 +89,136 @@ $(document).ready(() => {
         GEOCODING & DATA PROCESSING FUNCTIONS
     */
 
+    function injectBVDropdown( $parentElement ) {
+
+        if (!addBVDropdown) {
+            return;
+        }
+
+        const $bvSelect = $('<select>', {
+            id: 'census-bv-dropdown',
+            class: 'form-control',
+            style: 'max-width: 300px; font-size: 0.9em;',
+            title: 'Select a benchmark/vintage to filter the geocoding results by census benchmark/vintage. This dropdown is populated based on the benchmark/vintage combinations specified in the EM config for the censuses being processed, with selected options corresponding to the benchmark/vintage combinations of the censuses currently selected for processing. Changing the selection will trigger re-processing of the censuses to update the geocoding results based on the new selection.'
+        });
+
+        $bvSelectWrapper = $(`
+            <div id="census-bv-dropdown-container" style="width: 100%; display: flex; align-items: center;">
+            </div>
+        `);
+
+        $bvSelectWrapper.append($bvSelect);
+        $parentElement.append($bvSelectWrapper);
+
+        updateBVSelectOptions();
+
+        $bvSelect.on('change', function() {
+
+            const selectedBV = $(this).val();
+
+            // add to the list of selected benchmarks
+            for (const bv of censusBenchmarks) {
+                if (bv.value === selectedBV) {
+                    bv.selected = true;
+                    break;
+                }
+            }
+
+            // add a census object with all configured mappings
+            //addCensusItem(selectedBV);
+
+            //updateBVSelectOptions(); // update the dropdown options to reflect the new selection and disable the selected benchmark/vintage
+        });
+
+        return $bvSelectWrapper;
+    }
+
+    function processUserSelectedBV() {
+
+        const selectedBV = $('#census-bv-dropdown').val() || null;
+
+        if ( !selectedBV ) {
+            return;
+        }
+
+        // add to the list of selected benchmarks - required for updateBVSelectOptions()
+        for (const bv of censusBenchmarks) {
+            if (bv.value === selectedBV) {
+                bv.selected = true;
+                break;
+            }
+        }
+
+        updateBVSelectOptions(); // update the dropdown options to reflect the new selection and disable the selected benchmark/vintage
+
+        addCensusItem(selectedBV); // add to the list of censuses to process, with all configured mappings
+    }
+
+    function updateBVSelectOptions() {
+
+        const $bvSelect = $('#census-bv-dropdown');
+
+        if (!$bvSelect.length) {
+            return;
+        }
+    
+        const $defaultOption = $('<option>', {
+            value: '',
+            text: '-- select benchmark/vintage --'
+        });
+
+        const $processedOptgroup = $('<optgroup>', { label: 'Selected Census Benchmark(s)' });
+        const $unprocessedOptgroup = $('<optgroup>', { label: 'Additional Census Benchmarks' });
+
+        $processedOptgroup.empty();
+        $unprocessedOptgroup.empty();
+
+        for (const bv of censusBenchmarks) {
+
+            const $option = $(`<option value="${bv.value}">${bv.name}</option>`);
+
+            if (bv.selected) {
+                $processedOptgroup.append($option).attr('disabled', true);
+            }
+            else {
+                $unprocessedOptgroup.append($option);
+            }
+        }
+
+        console.log('$processedOptgroup:', $processedOptgroup);
+        console.log('$unprocessedOptgroup:', $unprocessedOptgroup);
+
+        $bvSelect.empty().append($defaultOption, $processedOptgroup, $unprocessedOptgroup);
+    }
+
+    function getGeocoderContainer($anchorField) {
+
+        if ( $anchorField.closest('td').find('.census-geocoder-container').length ) {
+            return;
+        }
+
+        const $container = $('<div>', {
+            class: 'census-geocoder-container',
+            style: 'width: 100%; display: flex; flex-direction: column; align-items: flex-start; row-gap: 3px; padding: 3px; margin-top: 3px; border: 1px solid #ccc; border-radius: 6px;'   
+        });
+
+        $anchorField.closest('td').append($container);
+
+        return $container;
+    }
+
     /**
      * Injects a bootstrap-styled Geocode Button below the address input element
      * 
      * @returns 
      */
-    function injectGeocodeAddressButton() {
+    function injectGeocodeAddressUIElements() {
 
         if (!addGeoCodeButton) {
             return;
         }
+
+        //console.log('injectGeocodeAddressUIElements: addressField:', addressField);
 
         const $buttonAnchorField = $(`[name="${addressField}"]`);
 
@@ -99,14 +232,21 @@ $(document).ready(() => {
                 <button type="button" 
                     id="census-geocode-address-button" 
                     class="btn btn-secondary" 
-                    style="margin-left: 0; margin-top: 5px; font-size: 0.9em;"
+                    style="margin-left: 0; font-size: 0.9em;"
                     title="Click to geocode the address and populate the corresponding fields with Census data">
                     <i class="fas fa-map-marker-alt"></i> Geocode Address
                 </button>
             </div>
         `);
 
-        $buttonAnchorField.closest('td').append($geoCodeButton);
+        const $parentElement = getGeocoderContainer($buttonAnchorField);
+
+        if ( addBVDropdown ) {
+
+            injectBVDropdown($parentElement);
+        }
+
+        $parentElement.append($geoCodeButton);
 
         $geoCodeButton.on('click', function() {
 
@@ -127,7 +267,7 @@ $(document).ready(() => {
         });
     }
 
-    function injectGeocodeLocationButton() {
+    function injectGeocodeLocationUIElements() {
 
         if (!addGeoCodeButton) {
             return;
@@ -146,7 +286,7 @@ $(document).ready(() => {
                 <button type="button" 
                     id="census-geocode-location-button" 
                     class="btn btn-secondary" 
-                    style="margin-left: 0; margin-top: 5px; font-size: 0.9em;"
+                    style="margin-left: 0; font-size: 0.9em;"
                     title="Click to geocode the location and populate the corresponding fields with Census data">
                     <i class="fas fa-map-marker-alt"></i> Geocode Location
                 </button>
@@ -156,7 +296,9 @@ $(document).ready(() => {
         // the location geocode button is determined by the DOM order of the lat and long fields
         const $buttonAnchorField = compareDomOrder($latField[0], $longField[0]) < 0 ? $longField : $latField; 
 
-        $buttonAnchorField.closest('td').append($geoCodeButton);
+        const $parentElement = getGeocoderContainer($buttonAnchorField);
+
+        $parentElement.append($geoCodeButton);
 
         $geoCodeButton.on('click', function() {
 
@@ -207,18 +349,56 @@ $(document).ready(() => {
         return 0; // same node or disconnected
     }
 
+    /*
+        COMPREHENSIVE BENCHMARK-VINTAGE LIST - all valid benchmark-vintage combinations,
+        with each item in the list containing the benchmark-vintage,
+        and whether it's in the list of censuses to be processed (i.e. whether it's selected or not, which could be used to filter the dropdown if the addBVDropdown option is enabled in the EM config).
+    */
+
+    function newBenchmarkVintageList() {
+
+        if (!addBVDropdown || !module.tt('censusBenchmarks') || module.tt('censusBenchmarks').length === 0) {
+            return [];
+        }
+
+        const bvCount = module.tt('censusBenchmarks').length;
+        const bvList = [];
+
+        for (let i=0; i < bvCount; i++) {
+
+            const bv = module.tt('censusBenchmarks')[i];
+
+            // Whether bv is attached to any census config for the EM.
+            // User-selected b-v combos will have selected=true, configured=false.
+            const bvConfigured = censuses.some(c => c.benchmark_vintage === bv.value);
+
+            bvList.push({
+                name: bv.name,
+                value: bv.value,
+                configured: bvConfigured,
+                selected: bvConfigured
+            });
+        }
+
+        return bvList;
+    }
     
     /*
-        GEOCODE DATA OBJECT
+        GEOCODE DATA OBJECT - this is the object that will hold all geocoded data extracted from the API responses, 
+        with keys corresponding to the REDCap field names mapped to census data across the censuses processed, 
+        and values that are updated as data are extracted and processed. 
+        This object is initialized with empty string values for all mapped fields, 
+        and then updated with retrieved data during processing, 
+        and finally used to update the UI after all processing is complete.
     */
 
     /**
-     * Returns an object with keys corresponding to all unique REDCap field names mapped to census data across the censuses processed.
+     * Returns an array with keys corresponding to all unique REDCap field names mapped to census data across the censuses processed.
      * Called once to initialize the global geocodeData object.
      * 
      * @returns {Object} Object with keys as unique field names and values as empty strings
      */
-    function getGeocodeDataObject() {
+    function newGeocodeDataRecord() {
 
         // store the names in a set to ensure uniqueness, since the same field might be mapped to data from multiple censuses
         const geocodeFields = new Set();
@@ -241,11 +421,41 @@ $(document).ready(() => {
 
         return geocodeDataObject;
     }
+
+    /**
+     * 
+     * A consolidated mapping of all census field keys to REDCap field names across the censuses processed.
+     * Currently used only for user-added census benchmarks (i.e. when the addBVDropdown option is enabled in the EM config).
+     * 
+     * @returns {Array} Array of objects mapping census field keys to REDCap field names
+     * 
+     */
+    function newGeocodeFieldMappings() {
+
+        const geocodeFieldMappings = [];
+
+        // collect the field names mapped to census data across the censuses processed
+        for (const census of censuses) {
+            for (const mapping of census.mappings) {
+                const geocodeFieldMapping = {
+                        tigerWebAttribKey: mapping.keys,
+                        redcapFieldName: mapping.fields
+                };
+
+                // add if not already in the consolidated mapping
+                if ( !geocodeFieldMappings.some(m => m.tigerWebAttribKey === geocodeFieldMapping.tigerWebAttribKey 
+                    && m.redcapFieldName === geocodeFieldMapping.redcapFieldName) ) {
+                    geocodeFieldMappings.push(geocodeFieldMapping);
+                }
+            }
+        }
+        return geocodeFieldMappings;
+    }
     
     /**
      * Clears the global geocodeData object by setting all values to empty strings.
      */
-    function clearGeocodeDataObject() {
+    function clearGeocodeDataRecord() {
 
         for (const fieldName of Object.keys(geocodeData)) {
             geocodeData[fieldName] = '';
@@ -265,11 +475,14 @@ $(document).ready(() => {
     }
 
     /*
-       GEOCODE REPORT OBJECT
+       GEOCODE REPORT OBJECT - this object is built to capture details about the geocoding process and result, 
+       including the match result summary, details for each census processed, and the list of all matched addresses across the censuses processed.
+       Always output to the console after all censuses are processed, 
+       and optionally output to the UI if a geocodeReportField is specified in the EM config.
     */
 
     // returns a blank geocode report object, called once to initialize the global geocodeReport object
-    function getGeocodeReportObject() {
+    function newGeocodeReportObject() {
 
         return {
             matchResult: '', // summary of the geocoding result - either 'not matched', 'matched', or 'multiple matches'
@@ -301,13 +514,13 @@ $(document).ready(() => {
     }
 
     // called for each census, before the UI is updated
-    function updateGeocodeReportObject(census, geocodesUpdated = 0, api = geocodeAPI.addressLookup) {
+    function updateGeocodeReportObject(census, geocodeUpdates = [], api = geocodeAPI.addressLookup) {
 
         geocodeReport.censusSummaries.push({
             benchmarkVintage: census.benchmark_vintage,
             geocodedAddress: census.geocodedAddress,
             geocodedLocation: census.geocodedLocation,
-            geocodesUpdated: geocodesUpdated
+            geocodesUpdated: geocodeUpdates.length
         });
 
 
@@ -351,6 +564,9 @@ $(document).ready(() => {
                     reportLines.push(`Geocoded Location: latitude ${census.geocodedLocation['latitude']}, longitude ${census.geocodedLocation['longitude']}`);
                 }
                 reportLines.push(`Geocodes Updated: ${census.geocodesUpdated}`);
+                for (const update of geocodeUpdates) {
+                    reportLines.push(`  - ${update.redcapFieldName} => ${update.value} from TigerWeb attribute ${update.tigerWebAttribKey}`);
+                }
             }
         }
 
@@ -367,6 +583,24 @@ $(document).ready(() => {
 
         // match result
         geocodeData[geocodeMatchResultField] = geocodeReport.matchResult;
+    }
+
+    function addCensusItem(benchmark_vintage) {
+        
+        const censusItem = {
+            benchmark_vintage: benchmark_vintage,
+            mappings: [],   // this will be populated with the consolidated field mappings across all configured censuses
+        }
+
+        // add the consolidated field mappings for all configured censuses
+        for (const mapping of geocodeFieldMappings) {
+            censusItem.mappings.push({
+                keys: mapping.tigerWebAttribKey,
+                fields: mapping.redcapFieldName
+            });
+        }
+
+        censuses.push(censusItem);
     }
 
     /**
@@ -401,11 +635,13 @@ $(document).ready(() => {
                 .prop('disabled', true)
                 .after($spinner)
             ;
+
+            processUserSelectedBV(); // if the user has selected a benchmark/vintage from the dropdown, add it to the list of censuses to process
         }
 
         // clear objects that will be populated with new data during this process
         clearGeocodeReportObject(); // clear the report object values before processing
-        clearGeocodeDataObject();  // reset the geocodeData object values to empty strings
+        clearGeocodeDataRecord();  // reset the geocodeData object values to empty strings
 
         let dataRetrieved = false; // true if any geographies are retrieved from any of the censuses processed
         let resolved = false; // true if promise resolves successfully
@@ -570,8 +806,8 @@ $(document).ready(() => {
                     return resolve(true);
                 }
 
-                // update the geocode report object to reflect that no data was retrieved for this census - we want to capture this in the report even if it's not treated as an error per se, since it is still important information about the geocoding process and result for this census
-                updateGeocodeReportObject(census, 0, api); // pass 0 geocodes updated since no data were retrieved
+                // update the geocode report object to reflect that no data were retrieved for this census - we want to capture this in the report even if it's not treated as an error per se, since it is still important information about the geocoding process and result for this census
+                updateGeocodeReportObject(census, [], api); // pass 0 geocodes updated since no data were retrieved
 
                 // resolve and indicate that no data were retrieved for this census
                 resolve(false);
@@ -635,7 +871,10 @@ $(document).ready(() => {
      */
 	function extractCensusData(census, api = geocodeAPI.addressLookup) {
 		const sortedGeographyLayers = sortKeysByValue(census.lookupTable); // layer names sorted by land area, a proxy for layer hierarchy
+
         let geocodesUpdated = 0;
+
+        const geocodeUpdates = []; // key-value pairs
 
         //console.log('extractCensusData: census:', census);
         //console.log('extractCensusData: sortedGeographyLayers:', sortedGeographyLayers);
@@ -661,11 +900,13 @@ $(document).ready(() => {
                 //  (1) later reporting, and
                 //  (2) for updating the UI after all censuses are processed.
                 geocodeData[fieldName] = value; 
+
+                geocodeUpdates.push({ tigerWebAttribKey: mapping.keys, redcapFieldName: fieldName, value: value });
             }
 		}
 
         // update the geocode report object with the benchmark/vintage, matched address, and count of geocodes updated for this census
-        updateGeocodeReportObject(census, geocodesUpdated, api);
+        updateGeocodeReportObject(census, geocodeUpdates, api);
 	}
 
 });

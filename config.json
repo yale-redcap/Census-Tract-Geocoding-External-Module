@@ -90,8 +90,8 @@
             "repeatable": false
         },
         {
-            "key": "add_bv_button",
-            "name": "Select the benchmark-vintage through the UI",
+            "key": "add_bv_dropdown",
+            "name": "Allow selecting the Census benchmark through the UI",
             "required": false,
             "type": "checkbox",
             "repeatable": false,
@@ -311,10 +311,9 @@
 			]
 		},
         {
-            "key": "debug_text",
-            "name": "debug text",
-            "type": "textarea",
-            "repeatable": false
+            "key": "debug-info",
+            "type": "descriptive",
+            "name": "debug info goeth here"
         }
 	]
 }

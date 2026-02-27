@@ -62,11 +62,11 @@ class CensusExternalModule extends AbstractExternalModule
 
             $cache_age_seconds = $bv_cache_record['age_seconds'] ?? null;
 
+            $cache_age_days = ($cache_age_seconds !== null) ? round($cache_age_seconds / 86400, 2) : "unknown";
+
             $cacheTimeout = ( $cache_age_seconds && $cache_age_seconds > $this::CACHE_TIMEOUT );
 
-            $debug_info .= "Cache timestamp: " . $bv_cache_record["timestamp"] . "\n";
-            $debug_info .= "Database now: " . $bv_cache_record["db_now"] . "\n";
-            $debug_info .= "Database Cache age: " . $cache_age_seconds . " seconds\n";
+            $debug_info .= "Cache age: " . $cache_age_days . " days\n";
             $debug_info .= "Cache timeout: " . ($cacheTimeout ? "yes" : "no") . "\n";
 
             if ( $cacheTimeout ) {
@@ -94,6 +94,7 @@ class CensusExternalModule extends AbstractExternalModule
         if ( $cacheLoaded && !$apiLoaded ) {
 
             $combo_choices = $bv_cache_record["bv"];
+            $debug_info .= "Benchmark-vintage combinations loaded from cache with EM log_id: {$bv_cache_record['log_id']}\n";
         }
 
         // one last check
@@ -108,22 +109,97 @@ class CensusExternalModule extends AbstractExternalModule
 
         if ( $apiLoaded ) {
             
-            $log_id = $this->bv_save($combo_choices);
-            $debug_info .= "Benchmark-vintage combos saved to em_log with log_id: {$log_id}\n";
+            $saveResult = $this->bv_save($combo_choices);
+
+            $log_id = $saveResult["log_id"] ?? null;
+
+            $debug_info .= $saveResult["message"] . "\n";
+
+            $debug_info .= "Latest benchmark-vintage combinations are cached in EM log with log_id: {$log_id}\n";
         }
-        
-        $this->setProjectSetting("debug_text", $debug_info);
+
+        $debug_info_idx = array_search("debug-info", array_column($settings, "key"));
+
+        if ( $debug_info_idx !== null ) {
+
+            $settings[$debug_info_idx]["name"] = "<p>Census Benchmark-Vintage retrieval pathway:</p><pre>" . $debug_info . "</pre>";
+        }
 
 		return $settings;
 	}
 
-    function redcap_module_save_configuration($project_id){
+	function redcap_every_page_before_render(){
+		if(PHP_SAPI === 'cli'){
+			return;
+		}
 
-        if ( !$project_id ) {
-            // We're on the system settings page
-            return;
+		$expectedUrl = APP_URL_EXTMOD . 'manager/ajax/get-settings.php';
+		$actualUrl = $_SERVER['REQUEST_SCHEME'] . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['SCRIPT_NAME'];
+		if($expectedUrl !== $actualUrl){
+			return;
+		}
+
+		$pid = $_GET['pid'] ?? null;
+		if($pid === null){
+			// We're on the system settings
+			return;
+		}
+		else{
+			// Make sure old settings get transitioned
+			$this->getCensuses();
+		}
+	}
+
+    function redcap_module_ajax($action, $payload){
+
+        if ( $action === "fetchCensusBenchmarks" ) {
+
+            return $this->fetchBenchmarkVintageChoicesFromEmLog();
         }
     }
+
+	function transitionOldSettings(){
+		$keys = $this->getProjectSetting('keys');
+		$fields = $this->getProjectSetting('fields');
+
+		if($fields === null){
+			/**
+			 * Do nothing.  This project has not been configured, and does not need settings to be transitioned.
+			 * This was added to fix an odd subsetting display issue caused by setting 'mappings' to '[[]]',
+			 * when they would normally be set to '[[null]]' when a single null 'fields' value exists.
+			 */
+			return;
+		}
+
+		$this->setProjectSetting('year', ['2020']);
+		$this->setProjectSetting('censuses', ['true']);
+
+		$mappingValues = [];
+		foreach($fields as $field){
+			$mappingValues[] = "true";
+		}
+
+		$this->setProjectSetting('mappings', [$mappingValues]);
+
+		$this->setProjectSetting('keys', [$keys]);
+		$this->setProjectSetting('fields', [$fields]);
+	}
+
+	function getCensuses(){
+		$censuses = $this->getSubSettings('censuses');
+		if (!isset($censuses[0]['year']) && !isset($censuses[0]['benchmark_vintage'])) {
+			$this->transitionOldSettings();
+			$censuses = $this->getSubSettings('censuses');
+		}
+
+		return $censuses;
+	}
+
+	function getSharedArgsBenchmark($benchmark_vintage) {
+		[$benchmark, $vintage] = explode(" - ", $benchmark_vintage);
+
+		return "benchmark={$benchmark}&vintage={$vintage}&format=json";
+	}
 
 	function generateBenchmarkVintageChoices(): array {
 
@@ -170,7 +246,10 @@ class CensusExternalModule extends AbstractExternalModule
 
         if ( $current && $current["bv_hash"] === $combos_hash ) {
             // the combos have not changed since the last save, so do not log them again
-            return $current["log_id"];
+            return [
+                "log_id" => $current["log_id"],
+                "message" => "Benchmark-vintage combinations have not changed since last save, so cache was not updated."
+            ];
         }
 
         $log_id = $this->log( $this::EMLOG_BV_MESSAGE,
@@ -180,7 +259,10 @@ class CensusExternalModule extends AbstractExternalModule
             ]
         );
 
-        return $log_id;
+        return [
+            "log_id" => $log_id,
+            "message" => "Benchmark-vintage combinations cached to EM log with log_id: {$log_id}"
+        ];
     }
 
     function fetchBenchmarkVintageChoicesFromEmLog(){
@@ -219,84 +301,25 @@ class CensusExternalModule extends AbstractExternalModule
             }
         }
 
-        $age_seconds = (new DateTimeImmutable($row["db_now"]))->getTimestamp() - (new DateTimeImmutable($row["timestamp"]))->getTimestamp();
+        try {
+            $db_now = new DateTimeImmutable($row["db_now"]);
+            $timestamp = new DateTimeImmutable($row["timestamp"]);
+        }
+        catch (Exception $e) {
+            // if there is an error parsing the dates, return false
+            return false;
+        }
+
+        $age_seconds = $db_now->getTimestamp() - $timestamp->getTimestamp();
 
         // thus endeth the gauntlet
         return [
             "bv" => $bv,
-            "bv_json" => $bv_json,
             "bv_hash" => $bv_hash,
             "log_id" => $row["log_id"],            
-            "timestamp" => $row["timestamp"],
-            "db_now" => $row["db_now"],
             "age_seconds" => $age_seconds
         ];
     }
-
-	function redcap_every_page_before_render(){
-		if(PHP_SAPI === 'cli'){
-			return;
-		}
-
-		$expectedUrl = APP_URL_EXTMOD . 'manager/ajax/get-settings.php';
-		$actualUrl = $_SERVER['REQUEST_SCHEME'] . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['SCRIPT_NAME'];
-		if($expectedUrl !== $actualUrl){
-			return;
-		}
-
-		$pid = $_GET['pid'] ?? null;
-		if($pid === null){
-			// We're on the system settings
-			return;
-		}
-		else{
-			// Make sure old settings get transitioned
-			$this->getCensuses();
-		}
-	}
-
-	function transitionOldSettings(){
-		$keys = $this->getProjectSetting('keys');
-		$fields = $this->getProjectSetting('fields');
-
-		if($fields === null){
-			/**
-			 * Do nothing.  This project has not been configured, and does not need settings to be transitioned.
-			 * This was added to fix an odd subsetting display issue caused by setting 'mappings' to '[[]]',
-			 * when they would normally be set to '[[null]]' when a single null 'fields' value exists.
-			 */
-			return;
-		}
-
-		$this->setProjectSetting('year', ['2020']);
-		$this->setProjectSetting('censuses', ['true']);
-
-		$mappingValues = [];
-		foreach($fields as $field){
-			$mappingValues[] = "true";
-		}
-
-		$this->setProjectSetting('mappings', [$mappingValues]);
-
-		$this->setProjectSetting('keys', [$keys]);
-		$this->setProjectSetting('fields', [$fields]);
-	}
-
-	function getCensuses(){
-		$censuses = $this->getSubSettings('censuses');
-		if (!isset($censuses[0]['year']) && !isset($censuses[0]['benchmark_vintage'])) {
-			$this->transitionOldSettings();
-			$censuses = $this->getSubSettings('censuses');
-		}
-
-		return $censuses;
-	}
-
-	function getSharedArgsBenchmark($benchmark_vintage) {
-		[$benchmark, $vintage] = explode(" - ", $benchmark_vintage);
-
-		return "benchmark={$benchmark}&vintage={$vintage}&format=json";
-	}
 
 	/*
 	 * @deprecated 2.0.0 The "year" option is no longer visible in the configuration settings
@@ -456,6 +479,7 @@ class CensusExternalModule extends AbstractExternalModule
 	function addScript($project_id, $record, $instrument, $event_id, $group_id, $survey_hash = null, $response_id = null, $confirmationObject = null, $isSurvey = false) {
 
 		if (!$project_id) { return; }
+
 		$this->initializeJavascriptModuleObject();
 
 		$censuses = $this->getCensuses();
@@ -469,6 +493,7 @@ class CensusExternalModule extends AbstractExternalModule
             "geocodeReportField" => $this->getProjectSetting('geocode_report'),
             "geocodeMatchResultField" => $this->getProjectSetting('geocode_match_result'),
             "addGeoCodeButton" => $this->getProjectSetting('add_geocode_button'),
+            "addBVDropdown" => $this->getProjectSetting('add_bv_dropdown'),
             "isSurvey" => $isSurvey,
             "buttonAnchorField" => $confirmationObject['buttonAnchorField'] ?? null,
             "confirmationObject" => $confirmationObject
@@ -491,6 +516,20 @@ class CensusExternalModule extends AbstractExternalModule
             }
         </style>
         STYLETEXT;
+
+        $censusBenchmarks = [];
+
+        if ( $fields["addBVDropdown"] ) {
+
+            $bvObj = $this->fetchBenchmarkVintageChoicesFromEmLog();
+
+            if ( $bvObj && isset($bvObj["bv"]) && is_array($bvObj["bv"]) && count($bvObj["bv"]) > 0 ) {
+
+                $censusBenchmarks = $bvObj["bv"];
+            }
+        }
+
+        $this->tt_addToJavascriptModuleObject("censusBenchmarks", $censusBenchmarks);
 
 		echo "<script src='" . $this->getUrl("js/main.js") . "'></script>";
 	}
