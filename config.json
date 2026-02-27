@@ -7,7 +7,7 @@
 
 	"framework-version": 16,
 
-    "version": "2.0.3",
+    "version": "2.0.4",
 
 	"description": "This module converts an address to a host of information about the address, available via a project link.",
 	
@@ -80,18 +80,18 @@
         {
             "key": "ui-options-header",
             "type": "descriptive",
-            "name": "<h5>User Interface Options</h5><p>By default, geocoding will occur in real time as data (address, latitude, longitude) are entered or edited. You may elect to to trigger geocoding manually using a button instead. You may also choose to suppress real-time geocoding on survey pages.</p>"
+            "name": "<h5>User Interface Options</h5><p>By default, geocoding will occur in real time as data (address, latitude, longitude) are entered or edited. You may elect to require the user to trigger geocoding manually using a button instead. You may further allow the user to select additional benchmark-vintage combinations to process in addition to the configured combinations.</p>"
         },
         {
             "key": "add_geocode_button",
-            "name": "Add button(s) to trigger geocoding",
+            "name": "Require user to initiate geocoding by clicking a button",
             "required": false,
             "type": "checkbox",
             "repeatable": false
         },
         {
             "key": "add_bv_dropdown",
-            "name": "Allow selecting the Census benchmark through the UI",
+            "name": "Allow user selection of additional benchmark-vintages (in addition to the default configured combination(s))",
             "required": false,
             "type": "checkbox",
             "repeatable": false,

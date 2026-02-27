@@ -1,5 +1,7 @@
 # Census Geocoder External Module
-The Census Geocoder's main function is to map REDCap address or location data onto user-selectable Census geocode attributes. These include the FIPS codes for block, tract, county and state; as well as other geographic attribute values.
+The Census Geocoder's main function is to map REDCap address or location data onto user-selectable Census geocode attributes. These include the FIPS codes for block, tract, county and state; as well as other geographic (TigerWeb) attribute values.
+
+February 2026
 
 ## Project Configuration
 
@@ -9,20 +11,24 @@ The Census Geocoder's main function is to map REDCap address or location data on
 
 These REDCap fields will be used in the Census geocode API calls to fetch geocoding data. If an address match fails or an address is not available, a match by location (latitude and longitude) can be attempted. 
 
-- **Field Containing the Full Address**: The field containing the address for which you wish to receive US Census data.  
+- **Field Containing the Full Address**: The field containing the address for which you wish to receive US Census data. If this is a calculated field, you should enable **Require user to initiate geocoding by clicking a button**, below.
 
 - **Fields Containing the Latitude/Longitude (if address not found)**: These fields are most useful when populated by the [Address Autocomplete External Module](https://github.com/vanderbilt-redcap/address-autocomplete).  
 
-### User Interface Option  
+### User Interface Options  
 
-- **Add button(s) to trigger API calls** By default, geocoding will occur in real time as data (address, latitude, longitude) are entered or edited. You may elect to to trigger geocoding manually using a button instead. If you specify both address and location (latitude/longitude) fields, separate buttons will be added for each geocoding method.
+By default, Census Geocoder is passive, reacting to data entry 'change' events on the form containing the fields to be geocoded. Census Geocoder also supports a mode that requires the user to initiate geocoding by clicking a button. This may be optimal for projects enabling this EM after a substantial amount of data entry has transpired, or when the address is stored in a calculated field (in which case the data entry change event will not be fired). You may also enable a dropdown from which the user may select additional benchmark-vintage combinations to be processed along with (after) the configured combinations. User-selected benchmark-vintage combinations inherit the superset of field mappings over all configured combinations.
+
+- **Require user to initiate geocoding by clicking a button** By default, geocoding will occur in real time as data (address, latitude, longitude) are entered or edited. You may elect to to trigger geocoding manually using a button instead. If you specify both address and location (latitude/longitude) fields, separate buttons will be added for each geocoding method.  
+
+- **Allow user selection of additional benchmark-vintages** You allow the user to select additional benchmark-vintage combinations to process in addition to the configured combinations. Each additional benchmark-vintage combination is selected from a dropdown inserted after the address field on the REDCap form, for which the already-selected (or configured) combinations are distinguished from the additional, selectable combinations.
 
 ### Census Benchmarks and Geocode Field Mapping  
 
 You may select any number of Census Benchmark-Vintage combinations from which to geocode your data. 
 For each benchmark-vintage combination, you specify:
 
-- **Benchmark - Vintage**: The Benchmark and Vintage from which you wish to receive data. Only currently supported combinations are listed, these are checked upon opening the module configuration menu. Note that options containing "Current" are subject to flux and are typically not recommended to be used.  
+- **Benchmark - Vintage**: The Benchmark and Vintage from which you wish to receive data. Only currently supported combinations are listed. The list of valid benchmark-vintage combinations is updated weekly from the online Census database. Note that options containing "Current" are subject to flux and are typically not recommended to be used.  
 
     - "Benchmark" refers to the time period when the address range was captured in TIGER, "Vintage" is the date when the geography information was captured. For more information see [the official FAQ](https://www2.census.gov/geo/pdfs/maps-data/data/FAQ_for_Census_Bureau_Public_Geocoder.pdf).  
 

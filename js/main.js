@@ -164,7 +164,7 @@ $(document).ready(() => {
     
         const $defaultOption = $('<option>', {
             value: '',
-            text: '-- select benchmark/vintage --'
+            text: '-- select additional benchmark/vintage --'
         });
 
         const $processedOptgroup = $('<optgroup>', { label: 'Selected Census Benchmark(s)' });
@@ -512,21 +512,46 @@ $(document).ready(() => {
             geocodeReport.allMatchedAddresses.add(match.matchedAddress);
         }
     }
+    /**
+     * Called after each census api call.
+     * 
+     * Accumulates summary data about the census processed and the geocoding result,
+     * storing them in the geocodeReport object for final reporting after all censuses are processed
+     *
+     * @param {*} census    the census object that was processed
+     * @param {geocodeAPI} api       indicates which API was used for geocoding
+     */
+    function updateGeocodeReportObject(census, api = geocodeAPI.addressLookup) {
 
-    // called for each census, before the UI is updated
-    function updateGeocodeReportObject(census, geocodeUpdates = [], api = geocodeAPI.addressLookup) {
-
+        // push to the cumulative summary of censuses processed up to this point
         geocodeReport.censusSummaries.push({
             benchmarkVintage: census.benchmark_vintage,
             geocodedAddress: census.geocodedAddress,
             geocodedLocation: census.geocodedLocation,
-            geocodesUpdated: geocodeUpdates.length
+            geocodeUpdates: census.geocodeUpdates
         });
 
+        // update the set of all matched addresses with the matched address(es) returned from the API for this census
+        // (allMatchedAddresses is a set to ensure uniqueness).
+        if (census.matchedAddresses && census.matchedAddresses.length > 0) {
+            for (const matchedAddress of census.matchedAddresses) {
+                geocodeReport.allMatchedAddresses.add(matchedAddress);
+            }
+        }
+    }
+
+    /**
+     * Called after all census API calls have been processed and resolved as successful.
+     * 
+     * Performs final updates of the geocodeReport object AND the geocodeData object.
+     * 
+     * @param {geocodeAPI} api 
+     */
+    function processGeocodeReport(api = geocodeAPI.addressLookup) {
 
         let reportLines = [];
         let timestamp = new Date().toLocaleString();
-        let anyGeocodesUpdated = geocodeReport.censusSummaries.some(c => c.geocodesUpdated > 0);
+        let anyGeocodesUpdated = geocodeReport.censusSummaries.some(c => c.geocodeUpdates.length > 0);
 
         reportLines.push(`Geocode Report on ${timestamp}`);
         
@@ -543,7 +568,7 @@ $(document).ready(() => {
             reportLines.push(`Geocoding Method: Single Location Lookup API`);
             reportLines.push(`Location Match Result: ${geocodeReport.matchResult}`);
         }
-
+        
         if (geocodeReport.censusSummaries.length === 0) {
 
             reportLines.push('\nNo geocodes were updated.');
@@ -556,15 +581,21 @@ $(document).ready(() => {
             for (const census of geocodeReport.censusSummaries) {
                 reportLines.push(`\nBenchmark-Vintage: ${census.benchmarkVintage}`);
                 if (api===geocodeAPI.addressLookup) {
-                    reportLines.push(`Geocoded Address: ${census.geocodedAddress}`);
+
+                    if (census.geocodedAddress) {
+                        reportLines.push(`Geocoded Address: ${census.geocodedAddress}`);
+                    }
                 }
                 else if (api===geocodeAPI.locationLookup) {
-                    //console.log('updateGeocodeReportObject: census:', census);
-                    //console.log('updateGeocodeReportObject: location:', census.geocodedLocation);
-                    reportLines.push(`Geocoded Location: latitude ${census.geocodedLocation['latitude']}, longitude ${census.geocodedLocation['longitude']}`);
+                    if (census.geocodedLocation.latitude && census.geocodedLocation.longitude) {
+                        reportLines.push(`Geocoded Location: latitude ${census.geocodedLocation.latitude}, longitude ${census.geocodedLocation.longitude}`);
+                    }
                 }
-                reportLines.push(`Geocodes Updated: ${census.geocodesUpdated}`);
-                for (const update of geocodeUpdates) {
+                reportLines.push(`${census.geocodeUpdates.length} REDCap field(s) updated`);
+
+                // iterate over the geocode updates for this census and include the TigerWeb attribute key, the REDCap field name, and the value that was updated in the UI for each geocode updated
+
+                for (const update of census.geocodeUpdates) {
                     reportLines.push(`  - ${update.redcapFieldName} => ${update.value} from TigerWeb attribute ${update.tigerWebAttribKey}`);
                 }
             }
@@ -585,6 +616,38 @@ $(document).ready(() => {
         geocodeData[geocodeMatchResultField] = geocodeReport.matchResult;
     }
 
+    /**
+     * Transfers the data stored in the geocodeData object to the corresponding fields in the REDCap form.
+     * Called after final updates of the geocodeData object.
+     * 
+     */
+    function transferGeocodeDataToREDCapForm() {
+
+        setMappedREDCapFieldsToEmpty(); // clear the UI, no stale data allowed
+
+        //console.log('Transferring the following mapped fields to the REDCap form:', geocodeData);
+
+        for (const [fieldName, value] of Object.entries(geocodeData)) {
+
+            const $field = $(`[name="${fieldName}"]`);
+            if ($field.length && value) {
+
+                $field.val(value).change();
+
+                if ($field.hasClass('rc-autocomplete')) {
+                    const $autocompleteField = $field.closest('td').find('.ui-autocomplete-input')
+                    $autocompleteField.val($field.find('option:selected').text()).change();
+                }
+            }
+        }
+    }
+
+    /**
+     * Adds a user-selected benchmark/vintage to the list of censuses to process, 
+     * with all field mappings from the EM config for that benchmark/vintage.
+     * 
+     * @param {*} benchmark_vintage  Name of the benchmark/vintage to add.
+     */
     function addCensusItem(benchmark_vintage) {
         
         const censusItem = {
@@ -692,11 +755,13 @@ $(document).ready(() => {
 
             if ( resolved ) {
 
+                // build the final report, and copy optional data to the geocodeData object for transfer to the REDCap form
+                processGeocodeReport(api);
+
                 transferGeocodeDataToREDCapForm();
 
                 // log the geocode report object to the console for debugging
-                //console.log('Geocoder: Final report:', geocodeReport);
-                //console.log('Geocoder: Data updates:', geocodeData);
+                console.log('Geocoder: Final report:', geocodeReport.reportText);
             }
         }
     }
@@ -753,9 +818,12 @@ $(document).ready(() => {
             return Promise.reject(new Error(`Invalid API specified: ${api}`));
         }
 
-        // initialize census properties that might be set by the API response
-        census.geocodedAddress = ''; 
-        census.lookupTable = null;   
+        // initialize additiional census properties that might be set by the API response
+        census.geocodedAddress = null; // the address that was geocoded
+        census.geocodedLocation = {latitude: null, longitude: null}; // the location that was geocoded
+        census.lookupTable = null;  // the geographies (layers) processed for the geocoding
+        census.geocodeUpdates = []; // a log of individual geocode updates {redcapFieldName, tigerWebAttribKey, value} 
+        census.matchedAddresses = []; // the matched address(es) returned from the API for this census, which could be used to resolve ambiguous matches if multiple addresses are returned 
 
         return new Promise((resolve, reject) => {
             $.post(url, data)
@@ -781,17 +849,15 @@ $(document).ready(() => {
 
                         // all matched addresses are saved to the geocode report object
                         // to aid in resolving ambiguous matches
-                        setGeocodeReportAllMatchedAddresses(addressMatches);
+                        // setGeocodeReportAllMatchedAddresses(addressMatches);
+                        census.matchedAddresses = addressMatches.map(match => match.matchedAddress);
                     }
                 }
                 else if (api === geocodeAPI.locationLookup) {
 
                     census.lookupTable = data?.result?.geographies;
-
-                    census.geocodedLocation = {
-                        latitude: data?.result?.input?.location?.y,
-                        longitude: data?.result?.input?.location?.x
-                    };
+                    census.geocodedLocation.latitude = data?.result?.input?.location?.y;
+                    census.geocodedLocation.longitude = data?.result?.input?.location?.x;   
 
                     //console.log('downloadCensusData: location lookup response data:', data);
                 }
@@ -807,7 +873,7 @@ $(document).ready(() => {
                 }
 
                 // update the geocode report object to reflect that no data were retrieved for this census - we want to capture this in the report even if it's not treated as an error per se, since it is still important information about the geocoding process and result for this census
-                updateGeocodeReportObject(census, [], api); // pass 0 geocodes updated since no data were retrieved
+                updateGeocodeReportObject(census, api); // pass 0 geocodes updated since no data were retrieved
 
                 // resolve and indicate that no data were retrieved for this census
                 resolve(false);
@@ -818,31 +884,6 @@ $(document).ready(() => {
                 reject(err || new Error(status));
             });
         });
-    }
-
-    /**
-     * Transfers the data stored in the geocodeData object to the corresponding fields in the REDCap form.
-     * Called after processing all censuses to update the UI with the retrieved data and geocode report.
-     */
-    function transferGeocodeDataToREDCapForm() {
-
-        setMappedREDCapFieldsToEmpty(); // clear the UI, no stale data allowed
-
-        //console.log('Transferring the following mapped fields to the REDCap form:', geocodeData);
-
-        for (const [fieldName, value] of Object.entries(geocodeData)) {
-
-            const $field = $(`[name="${fieldName}"]`);
-            if ($field.length && value) {
-
-                $field.val(value).change();
-
-                if ($field.hasClass('rc-autocomplete')) {
-                    const $autocompleteField = $field.closest('td').find('.ui-autocomplete-input')
-                    $autocompleteField.val($field.find('option:selected').text()).change();
-                }
-            }
-        }
     }
 
 	/**
@@ -872,13 +913,6 @@ $(document).ready(() => {
 	function extractCensusData(census, api = geocodeAPI.addressLookup) {
 		const sortedGeographyLayers = sortKeysByValue(census.lookupTable); // layer names sorted by land area, a proxy for layer hierarchy
 
-        let geocodesUpdated = 0;
-
-        const geocodeUpdates = []; // key-value pairs
-
-        //console.log('extractCensusData: census:', census);
-        //console.log('extractCensusData: sortedGeographyLayers:', sortedGeographyLayers);
-
 		for (const mapping of census.mappings) {
 			let value = '';
 
@@ -892,8 +926,6 @@ $(document).ready(() => {
 
             if (value) {
 
-                geocodesUpdated++;
-
                 const fieldName = mapping.fields
 
                 // Save the extracted value to the global geocodeData object for
@@ -901,12 +933,12 @@ $(document).ready(() => {
                 //  (2) for updating the UI after all censuses are processed.
                 geocodeData[fieldName] = value; 
 
-                geocodeUpdates.push({ tigerWebAttribKey: mapping.keys, redcapFieldName: fieldName, value: value });
+                census.geocodeUpdates.push({ tigerWebAttribKey: mapping.keys, redcapFieldName: fieldName, value: value });
             }
 		}
 
         // update the geocode report object with the benchmark/vintage, matched address, and count of geocodes updated for this census
-        updateGeocodeReportObject(census, geocodeUpdates, api);
+        updateGeocodeReportObject(census, api);
 	}
 
 });
