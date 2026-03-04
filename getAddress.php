@@ -1,4 +1,6 @@
-<?php
+<?php namespace Vanderbilt\CensusExternalModule;
+
+use Vanderbilt\CensusExternalModule\AddressMatcher;
 
 if ($_POST['get']) {
 
@@ -26,5 +28,20 @@ if ($_POST['get']) {
 	$output = curl_exec($ch);
 	curl_close($ch);
 
-	echo $output;
+    $data = json_decode($output, true);
+
+    $inputAddress = $data['result']['input']['address']['address'] ?? null;
+
+    $matchedAddress = $data['result']['addressMatches'][0]['matchedAddress'] ?? null;
+
+    if ($inputAddress && $matchedAddress) {
+        
+        $module = new CensusExternalModule();
+
+        $matchResult = AddressMatcher::compare($inputAddress, $matchedAddress);
+
+        $data['matchResult'] = $matchResult;
+    }
+
+	echo json_encode($data);
 }

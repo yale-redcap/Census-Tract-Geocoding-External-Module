@@ -500,7 +500,6 @@ $(document).ready(() => {
         geocodeReport.censusSummaries = []; // for each census processed, we will store the benchmark/vintage, matched address, and count of geographies updated in the UI
         geocodeReport.allMatchedAddresses.clear(); // we will accumulate all matched addresses across all censuses processed, since only the first matched address in each census is used for geocoding
         geocodeReport.reportText = ''; // this will be the full text of the geocode report, which includes the match result summary, details for each census processed, and the list of all matched addresses - this is what gets injected into the UI or reported to the console
-        geocodeReport.matchResultCode = ''; // reset the match result code as well
     }
 
     // called after the API response is received 
@@ -528,7 +527,9 @@ $(document).ready(() => {
             benchmarkVintage: census.benchmark_vintage,
             geocodedAddress: census.geocodedAddress,
             geocodedLocation: census.geocodedLocation,
-            geocodeUpdates: census.geocodeUpdates
+            geocodeUpdates: census.geocodeUpdates,
+            matchResultCode: census.matchResultCode,
+            matchResult: census.matchResult
         });
 
         // update the set of all matched addresses with the matched address(es) returned from the API for this census
@@ -558,15 +559,15 @@ $(document).ready(() => {
         if (api === geocodeAPI.addressLookup) {
 
             // indicates whether multiple matches were found within or across the censuses processed
-            geocodeReport.matchResult = geocodeReport.allMatchedAddresses && geocodeReport.allMatchedAddresses.size > 0 ? geocodeReport.allMatchedAddresses.size > 1 ? 'multiple matches' : 'matched' : 'not matched';
+            //geocodeReport.matchResult = geocodeReport.allMatchedAddresses && geocodeReport.allMatchedAddresses.size > 0 ? geocodeReport.allMatchedAddresses.size > 1 ? 'multiple matches' : 'matched' : 'not matched';
             reportLines.push(`Geocoding Method: Single Address Lookup API`);
-            reportLines.push(`Address Match Result: ${geocodeReport.matchResult}`);
+            //reportLines.push(`Address Match Result: ${geocodeReport.matchResult}`);
         }
         else if (api === geocodeAPI.locationLookup) {
 
             geocodeReport.matchResult = anyGeocodesUpdated ? 'matched' : 'not matched';
             reportLines.push(`Geocoding Method: Single Location Lookup API`);
-            reportLines.push(`Location Match Result: ${geocodeReport.matchResult}`);
+            //reportLines.push(`Location Match Result: ${geocodeReport.matchResult}`);
         }
         
         if (geocodeReport.censusSummaries.length === 0) {
@@ -584,6 +585,9 @@ $(document).ready(() => {
 
                     if (census.geocodedAddress) {
                         reportLines.push(`Geocoded Address: ${census.geocodedAddress}`);
+                        reportLines.push(`Match Result: ${census.matchResult}`);
+                        // store the match result
+                        geocodeData[geocodeMatchResultField] = census.matchResult;
                     }
                 }
                 else if (api===geocodeAPI.locationLookup) {
@@ -611,9 +615,6 @@ $(document).ready(() => {
 
         // stash it in the geocodeData object so it's available for transfer to the UI when transferGeocodeDataToREDCapForm is called at the end of processing all censuses
         geocodeData[geocodeReportField] = geocodeReport.reportText;
-
-        // match result
-        geocodeData[geocodeMatchResultField] = geocodeReport.matchResult;
     }
 
     /**
@@ -839,6 +840,8 @@ $(document).ready(() => {
 
                 if (api === geocodeAPI.addressLookup) {
 
+                    console.log('downloadCensusData: address lookup response data:', data);
+
                     const addressMatches = data?.result?.addressMatches;
 
                     if (addressMatches && addressMatches.length > 0) {
@@ -851,6 +854,7 @@ $(document).ready(() => {
                         // to aid in resolving ambiguous matches
                         // setGeocodeReportAllMatchedAddresses(addressMatches);
                         census.matchedAddresses = addressMatches.map(match => match.matchedAddress);
+                        census.matchResult = data?.matchResult?.result; // as determined by AddressMatcher::compare
                     }
                 }
                 else if (api === geocodeAPI.locationLookup) {

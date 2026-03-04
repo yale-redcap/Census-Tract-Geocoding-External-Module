@@ -5,6 +5,8 @@ use Exception;
 use ExternalModules\AbstractExternalModule;
 use ExternalModules\ExternalModules;
 
+require_once "AddressMatcher.php";
+
 class CensusExternalModule extends AbstractExternalModule
 {
 	const BENCHMARKS_URL = "https://geocoding.geo.census.gov/geocoder/benchmarks";
@@ -156,6 +158,10 @@ class CensusExternalModule extends AbstractExternalModule
 
             return $this->fetchBenchmarkVintageChoicesFromEmLog();
         }
+        else if ( $action === "fetchNextBatch") {
+
+            return $this->fetchNextBatch( $payload );
+        }
     }
 
 	function transitionOldSettings(){
@@ -263,6 +269,48 @@ class CensusExternalModule extends AbstractExternalModule
             "log_id" => $log_id,
             "message" => "Benchmark-vintage combinations cached to EM log with log_id: {$log_id}"
         ];
+    }
+
+    function fetchNextBatch( $payload ) {
+
+        $redcap_data = $this->getDataTable();
+
+        $batchSize = $payload["batchSize"] ?? 50;
+
+        $batch_selection_field = $this->getProjectSetting('batch_selection_field') ?? null;
+        $match_result_field = $this->getProjectSetting('geocode_match_result') ?? null;
+
+        $sql = "
+        select r.`record`
+            from redcap_record_list r
+            left join $redcap_data m on m.project_id = r.project_id and m.record = r.record and m.field_name = ?";
+
+        $params = [ $match_result_field ];
+
+        if ( $batch_selection_field ) {
+
+            $sql .= " inner join $redcap_data b on b.project_id = r.project_id and b.record = r.record and b.field_name = ? and b.value = '1'";
+
+            $params[] = $batch_selection_field;
+        }
+
+        $sql .= " where r.project_id = ? and (m.value is null or m.value = '') limit ?";
+
+        $params[] = $this->getProjectId();
+        $params[] = $batchSize;
+
+        $result = $this->query($sql, $params);
+        $record_ids = [];
+
+        if ( $result && $result->num_rows > 0 ) {
+
+            while ( $row = $result->fetch_assoc() ) {
+
+                $record_ids[] = $row["record"];
+            }
+        }
+
+        return $record_ids;
     }
 
     function fetchBenchmarkVintageChoicesFromEmLog(){

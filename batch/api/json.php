@@ -1,0 +1,14 @@
+<?php
+function json_out($data, int $code = 200): void {
+  http_response_code($code);
+  header('Content-Type: application/json');
+  echo json_encode($data);
+  exit;
+}
+
+// Returns decoded JSON as array, or empty array if invalid/missing
+function json_in(): array {
+  $raw = file_get_contents('php://input') ?: '';
+  $data = json_decode($raw, true);
+  return is_array($data) ? $data : [];
+}
