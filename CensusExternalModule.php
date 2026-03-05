@@ -6,6 +6,7 @@ use ExternalModules\AbstractExternalModule;
 use ExternalModules\ExternalModules;
 
 require_once "AddressMatcher.php";
+require_once "AddrSimScore.php";
 
 class CensusExternalModule extends AbstractExternalModule
 {
@@ -269,48 +270,6 @@ class CensusExternalModule extends AbstractExternalModule
             "log_id" => $log_id,
             "message" => "Benchmark-vintage combinations cached to EM log with log_id: {$log_id}"
         ];
-    }
-
-    function fetchNextBatch( $payload ) {
-
-        $redcap_data = $this->getDataTable();
-
-        $batchSize = $payload["batchSize"] ?? 50;
-
-        $batch_selection_field = $this->getProjectSetting('batch_selection_field') ?? null;
-        $match_result_field = $this->getProjectSetting('geocode_match_result') ?? null;
-
-        $sql = "
-        select r.`record`
-            from redcap_record_list r
-            left join $redcap_data m on m.project_id = r.project_id and m.record = r.record and m.field_name = ?";
-
-        $params = [ $match_result_field ];
-
-        if ( $batch_selection_field ) {
-
-            $sql .= " inner join $redcap_data b on b.project_id = r.project_id and b.record = r.record and b.field_name = ? and b.value = '1'";
-
-            $params[] = $batch_selection_field;
-        }
-
-        $sql .= " where r.project_id = ? and (m.value is null or m.value = '') limit ?";
-
-        $params[] = $this->getProjectId();
-        $params[] = $batchSize;
-
-        $result = $this->query($sql, $params);
-        $record_ids = [];
-
-        if ( $result && $result->num_rows > 0 ) {
-
-            while ( $row = $result->fetch_assoc() ) {
-
-                $record_ids[] = $row["record"];
-            }
-        }
-
-        return $record_ids;
     }
 
     function fetchBenchmarkVintageChoicesFromEmLog(){
@@ -581,4 +540,218 @@ class CensusExternalModule extends AbstractExternalModule
 
 		echo "<script src='" . $this->getUrl("js/main.js") . "'></script>";
 	}
+
+    /* BATCH PROCESSING FUNCTIONS */
+    
+    function fetchNextBatch( $payload ) {
+
+        $redcap_data = $this->getDataTable();
+
+        $batchSize = $payload["batchSize"] ?? 50;
+
+        $batch_selection_field = $this->getProjectSetting('batch_selection_field') ?? null;
+        $match_result_field = $this->getProjectSetting('geocode_match_result') ?? null;
+        $address_field = $this->getProjectSetting('address') ?? null;
+
+        $sql = "
+        select r.`record`
+            from redcap_record_list r
+            inner join $redcap_data a on a.project_id = r.project_id and a.record = r.record and a.field_name = ?
+            left join $redcap_data m on m.project_id = r.project_id and m.record = r.record and m.field_name = ?";
+
+        $params = [ $address_field, $match_result_field ];
+
+        if ( $batch_selection_field ) {
+
+            $sql .= " inner join $redcap_data b on b.project_id = r.project_id and b.record = r.record and b.field_name = ? and b.value = '1'";
+
+            $params[] = $batch_selection_field;
+        }
+
+        $sql .= " where r.project_id = ? and a.value is not null and a.value <> '' and (m.value is null or m.value = '') limit ?";
+
+        $params[] = $this->getProjectId();
+        $params[] = $batchSize;
+
+        $result = $this->query($sql, $params);
+        $record_ids = [];
+
+        if ( $result && $result->num_rows > 0 ) {
+
+            while ( $row = $result->fetch_assoc() ) {
+
+                $record_ids[] = $row["record"];
+            }
+        }
+
+        return $record_ids;
+    }
+
+    function getGeocodeFormAndEvent( $address_field ) {
+
+        $Proj = new \Project($this->getProjectId());
+
+        $field_metadata = $Proj->metadata[$address_field] ?? null;
+
+        if ( !$field_metadata ) {
+            return [
+                "error" => "The address field specified in the EM settings could not be found in the project metadata.",
+                "address_field" => $address_field,
+                "field_metadata" => $field_metadata,
+                "geocode_form_name" => null,
+                "geocode_event_id" => null,
+                "project_id" => $this->getProjectId()
+            ];
+        }
+
+        $form_name = $field_metadata["form_name"] ?? null;
+
+        if ( !$form_name ) {
+            return [
+                "error" => "The address field specified in the EM settings does not have a form name.",
+                "address_field" => $address_field,
+                "field_metadata" => $field_metadata,
+                "geocode_form_name" => null,
+                "geocode_event_id" => null,
+                "project_id" => $this->getProjectId()
+            ];
+        }
+
+        $form_name = $field_metadata["form_name"] ?? null;
+
+        if ( !$form_name ) {
+            return [
+                "error" => "The address field specified in the EM settings does not have a form name.",
+                "address_field" => $address_field,
+                "field_metadata" => $field_metadata,
+                "geocode_form_name" => null,
+                "geocode_event_id" => null,
+                "project_id" => $this->getProjectId()
+            ];
+        }
+
+        $eventsForms = $Proj->eventsForms;
+
+        foreach ( $eventsForms as $event_id => $forms ) {
+
+            if ( in_array($form_name, $forms) ) {
+
+                return [
+                    "error" => null,
+                    "geocode_form_name" => $form_name,
+                    "geocode_event_id" => $event_id
+                ];
+            }
+        }
+
+        return [
+            "error" => null,
+            "geocode_form_name" => $form_name,
+            "geocode_event_id" => null
+        ];
+    }
+
+    /**
+     * Returns data required to call the address API for a record and to store results in the redcap record.
+     * 
+     * @param mixed $record 
+     * @return array{error: null|string, geocode_form_name: mixed, geocode_event_id: mixed, address_field_name: mixed, address: mixed, benchmark_vintage: mixed, mappings: array{field: mixed, key: mixed}[]} 
+     * @throws Exception 
+     */
+
+    function getApiRequirements( $record = null ) {
+
+        $censuses = $this->getCensuses();
+        $mappings = [];
+        $benchmark_vintage = null; // primary b-v
+
+        $address_field = $this->getProjectSetting('address') ?? null;
+
+        if ( !$address_field ) {
+            return [
+                "error" => "Batch processing is not configured because no address field has been set in the EM settings."
+            ];
+        }
+
+        $geocode_match_result_field = $this->getProjectSetting('geocode_match_result') ?? null;
+
+        if ( !$geocode_match_result_field ) {
+            return [
+                "error" => "Batch processing is not configured because the geocode match result field has not been set in the EM settings."
+            ];
+        }
+
+        // this is optional, so no error if not set
+        $geocode_report_field = $this->getProjectSetting('geocode_report') ?? null;
+
+        foreach ( $censuses as $census ) {
+                
+            if ( !$benchmark_vintage ) { $benchmark_vintage = $census["benchmark_vintage"] ?? null; }
+
+            $census_mappings = $census["mappings"] ?? [];
+
+            foreach ( $census_mappings as $mapping ) {
+
+                $field = $mapping["fields"] ?? null;
+                $key = $mapping["keys"] ?? null;
+
+                // add to mappings if not already present, and if both field and key are present
+                if ( $field && $key && !in_array(["field" => $field, "key" => $key], $mappings) ) {
+
+                    $mappings[] = [
+                        "field" => $field,
+                        "key" => $key
+                    ];
+                }
+            }
+        }
+
+        if ( !$benchmark_vintage ) {
+            return [
+                "error" => "Batch processing is not configured because no benchmark-vintage combination has been set in the EM settings."
+            ];
+        }
+
+        if ( count($mappings) === 0 ) {
+            return [
+                "error" => "Batch processing is not configured because no benchmark-vintage to field mappings have been set in the EM settings."
+            ];
+        }
+
+        $geocode_form_event = $this->getGeocodeFormAndEvent( $address_field );
+
+        if ( !is_array($geocode_form_event) || $geocode_form_event["error"] !== null ) {
+            return [
+                "error" => $geocode_form_event["error"] ?? "Batch processing is not configured because the address field specified in the EM settings could not be found in the project metadata.",
+                "address_field" => $address_field,
+                "project_id" => $this->getProjectId(),
+                "record" => $record,
+            ];
+        }
+
+        $data_json = \REDCap::getData($this->getProjectId(), "json", $record, $address_field, $geocode_form_event["geocode_event_id"] ?? null);
+
+        try {
+            $address = json_decode($data_json, true)[0][$address_field] ?? null;
+        }
+        catch ( \Throwable $e ) {
+            return [
+                "error" => "Batch processing is not configured because there was an error retrieving the address data for the specified record. Error details: " . $e->getMessage()
+             ];
+        }
+        
+        return [
+            "error" => null,
+            "project_id" => $this->getProjectId(),
+            "record" => $record,
+            "geocode_form_name" => $geocode_form_event["geocode_form_name"] ?? null,
+            "geocode_event_id" => $geocode_form_event["geocode_event_id"] ?? null,
+            "geocode_match_result_field" => $geocode_match_result_field,
+            "geocode_report_field" => $geocode_report_field,
+            "address_field_name" => $address_field,
+            "address" => $address,
+            "benchmark_vintage" => $benchmark_vintage,
+            "mappings" => $mappings,
+        ];
+    }
 }

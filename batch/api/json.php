@@ -1,4 +1,5 @@
-<?php
+<?php namespace Vanderbilt\CensusExternalModule;
+
 function json_out($data, int $code = 200): void {
   http_response_code($code);
   header('Content-Type: application/json');

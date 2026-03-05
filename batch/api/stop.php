@@ -1,4 +1,4 @@
-<?php
+<?php namespace Vanderbilt\CensusExternalModule;
 
 require_once __DIR__ . "/RunState.php";
 require_once __DIR__ . "/json.php";

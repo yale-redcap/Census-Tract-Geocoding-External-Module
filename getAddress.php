@@ -34,14 +34,19 @@ if ($_POST['get']) {
 
     $matchedAddress = $data['result']['addressMatches'][0]['matchedAddress'] ?? null;
 
-    if ($inputAddress && $matchedAddress) {
+    $returnData = [
+        "inputAddress" => $inputAddress,
+        "matchedAddress" => $matchedAddress,
+        "apiResults" => $data['result'] ?? null
+    ];
+
+    if ($inputAddress || $matchedAddress) {
         
         $module = new CensusExternalModule();
 
-        $matchResult = AddressMatcher::compare($inputAddress, $matchedAddress);
-
-        $data['matchResult'] = $matchResult;
+        $similarityResults = AddrSimScore::address_similarity($inputAddress, $matchedAddress);
+        $returnData['similarityResults'] = $similarityResults;
     }
 
-	echo json_encode($data);
+	echo json_encode($returnData);
 }

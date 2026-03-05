@@ -1,4 +1,8 @@
-<?php
+<?php namespace Vanderbilt\CensusExternalModule;
+
+use RuntimeException;
+use Throwable;
+
 final class RunState {
     
     private string $dir;

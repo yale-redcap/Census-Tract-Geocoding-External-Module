@@ -1,11 +1,23 @@
-<?php
+<?php namespace Vanderbilt\CensusExternalModule;
+
+use RuntimeException;
+use Throwable;
 
 require_once __DIR__ . "/RunState.php";
 require_once __DIR__ . "/json.php";
 
+$project_id = $_POST["project_id"] ?? null; // allow form-data override
+
+// establish project context for EM functions
+$_GET['pid'] = $project_id;
+
+$module = new CensusExternalModule();
+
 $itemId = $_POST["itemId"] ?? null; // allow form-data override
 
 if ($itemId === null) json_out(["error" => "Missing itemId"], 400);
+
+if ($project_id === null) json_out(["error" => "Missing project_id"], 400);
 
 $runId = $_POST["runId"] ?? null; // allow form-data override for testing via browser
 
@@ -32,7 +44,7 @@ try {
   // --- Do the upstream API call and persist ---
   // call_upstream_api_and_persist($itemId);
 
-  $match_result = mark_processed($itemId); // if that's how your system works
+  $api_result = mark_processed($itemId); // if that's how your system works
 
   // update run counters best-effort
   $runState->update($runId, function($s) {
@@ -40,7 +52,7 @@ try {
     return $s;
   });
 
-  json_out(["ok" => true, "runStatus" => "running", "matchResult" => $match_result]);
+  json_out(["ok" => true, "runStatus" => "running", "api_result" => $api_result]);
 } 
 catch (Throwable $e) {
 
@@ -58,9 +70,75 @@ function already_processed($itemId): bool {
   return false;
 }
 
-function mark_processed($itemId): string {
-  // TODO: write processed indicator using existing model
+function mark_processed($itemId): array {
+    global $module;
 
-  return (rand(0, 10) < 2) ? "not matched" : "matched";
+    $apiRequirements = $module->getApiRequirements( $itemId);
+
+  	$address = urlencode(preg_replace("/[^a-zA-Z0-9 ,]/","",$apiRequirements["address"] ?? ""));
+
+	$benchmark_vintage = $apiRequirements["benchmark_vintage"] ?? null;
+
+    if ( !$benchmark_vintage || !$address ) {
+
+        return [    
+            "error" => "Missing required data for API call",
+            "record" => $itemId,
+            "address" => $address,
+            "benchmark_vintage" => $benchmark_vintage,
+            "apiRequirements" => $apiRequirements
+        ];
+    }
+
+    $url = 'https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress?address='.$address.'&'.$module->getSharedArgsBenchmark($benchmark_vintage);
+
+	$ch = curl_init();
+	curl_setopt($ch, CURLOPT_URL, $url);
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+	curl_setopt($ch, CURLOPT_VERBOSE, 0);
+	curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+	curl_setopt($ch, CURLOPT_AUTOREFERER, true);
+	curl_setopt($ch, CURLOPT_MAXREDIRS, 10);
+	curl_setopt($ch, CURLOPT_FRESH_CONNECT, 1);
+	$output = curl_exec($ch);
+	curl_close($ch);
+
+    $data = json_decode($output, true);
+
+    $inputAddress = $data['result']['input']['address']['address'] ?? null;
+
+    $matchedAddress = $data['result']['addressMatches'][0]['matchedAddress'] ?? null;
+
+    $matchResult = null;
+    $matchResultReasons = null;
+
+    if ($inputAddress && $matchedAddress) {
+        
+        //$module = new CensusExternalModule();
+
+        $compareResults = AddressMatcher::compare($inputAddress, $matchedAddress);
+        $matchResult = $compareResults["result"] ?? null;
+        $matchResultReasons = $compareResults["reasons"] ?? null;
+
+        // the comparison fails but the API did return a match, so we'll call it an inexact match instead of no match
+        if ($matchResult === "NO_MATCH") {
+
+            $matchResult = "INEXACT_MATCH";
+        }
+    }
+    else if ($inputAddress) {
+        
+        $matchResult = "NO_MATCH";
+    }
+
+    return [
+        "error" => null,
+        "inputAddress" => $inputAddress,
+        "matchedAddress" => $matchedAddress,
+        "matchResult" => $matchResult ?? null,
+        "matchResultReasons" => $matchResultReasons ?? null,
+        "data" => $data
+    ];
 }
 

@@ -1,6 +1,4 @@
-<?php
-
-namespace Vanderbilt\CensusExternalModule;
+<?php namespace Vanderbilt\CensusExternalModule;
 
 /**/
 ini_set('display_errors', '1');
@@ -10,6 +8,12 @@ error_reporting(E_ALL);
 
 $module = new CensusExternalModule();
 
+$censuses = $module->getCensuses();
+
+$project_id = $module->getProjectId();
+
+$batchApiRequirements  = $module->getApiRequirements("BWH-00133");
+
 $module->initializeJavascriptModuleObject();
 
 //$redcap_csrf_token = $module->getCSRFToken();
@@ -17,16 +21,18 @@ $module->initializeJavascriptModuleObject();
 use REDCap;
 use HtmlPage;
 
-//$module->emailDailyLog();
-
 $HtmlPage = new HtmlPage();
 $HtmlPage->ProjectHeader();
+/*
+echo "<pre>";
+echo print_r($batchApiRequirements, true);
+echo "</pre>";
+exit();
+*/
 
 ?>
 
 <script>
-
-    const csrf_token = <?php echo json_encode($redcap_csrf_token); ?>;
 
     const module = ExternalModules.Vanderbilt.CensusExternalModule;
 
@@ -34,6 +40,7 @@ $HtmlPage->ProjectHeader();
     const stopUrl = <?php echo json_encode($module->getUrl('batch/api/stop.php')); ?>;
     const processUrl = <?php echo json_encode($module->getUrl('batch/api/process.php')); ?>;
     const stopBeaconUrl = <?php echo json_encode($module->getUrl('batch/api/stop_beacon.php')); ?>;
+    const project_id = <?php echo json_encode($project_id); ?>;
 
     console.log("Batch module JS initialized. API endpoints:", { startUrl, stopUrl, processUrl, stopBeaconUrl });
 
@@ -128,6 +135,9 @@ $HtmlPage->ProjectHeader();
                     <td>Batch size</td>
                     <td>
                         <select id="batchSize">
+                            <option value="1">1</option>
+                            <option value="5">5</option>
+                            <option value="10">10</option>
                             <option value="25">25</option>
                             <option value="50" selected>50</option>
                             <option value="100">100</option>
@@ -159,18 +169,23 @@ $HtmlPage->ProjectHeader();
                     <th>Percentage</th>
                 </tr>
                 <tr>
-                    <td>Single</td>
-                    <td id="countSingle">-</td>
-                    <td id="pctSingle">-</td>
+                    <td>Exact</td>
+                    <td id="countExact">-</td>
+                    <td id="pctExact">-</td>
                 </tr>
                 <tr>
-                    <td>Multi</td>
-                    <td id="countMulti">-</td>
-                    <td id="pctMulti">-</td>
+                    <td>Inexact</td>
+                    <td id="countInexact">-</td>
+                    <td id="pctInexact">-</td>
                 </tr>
                 <tr>
-                    <td>No Match</td>
+                    <td>Open/No Match</td>
                     <td id="countNoMatch">-</td>
+                    <td id="pctNoMatch">-</td>
+                </tr>
+                <tr>
+                    <td>Closed/No Match</td>
+                    <td id="countClosedNoMatch">-</td>
                     <td id="pctNoMatch">-</td>
                 </tr>
                 <tr>
@@ -182,7 +197,7 @@ $HtmlPage->ProjectHeader();
         </div>
     </div>
 
-    <button class="btn btn-secondary" id="start">Start</button>
+    <button class="btn btn-secondary" id="start">Next Batch</button>
     <button class="btn btn-secondary" id="pause" disabled>Pause</button>
     <button class="btn btn-secondary" id="resume" disabled>Resume</button>
     <button class="btn btn-secondary" id="stop" disabled>Stop</button>
@@ -257,7 +272,7 @@ $HtmlPage->ProjectHeader();
     async function runBatch({ itemIds, concurrency = 6 }) {
         // --- Create a server-side run ---
 
-        const run = await postFormData(startUrl, { total: itemIds.length });
+        const run = await postFormData(startUrl, { total: itemIds.length, project_id: project_id });
 
         console.log("Run created:", run);
 
@@ -373,14 +388,14 @@ $HtmlPage->ProjectHeader();
                     const thisProcessUrl = processUrl + `?X=${crypto.randomUUID()}`;
 
                     // call the API to process the item, save results to server, etc.
-                    const r = await postFormData(thisProcessUrl, { runId: runId, itemId: itemId }, { signal: controller.signal });
+                    const r = await postFormData(thisProcessUrl, { runId: runId, itemId: itemId, project_id: project_id }, { signal: controller.signal });
 
-                    console.log(`Worker ${workerId} processed item ${itemId}:`, r);
+                    console.log(`Worker ${workerId} processed item ${itemId}: r=`, r);
 
                     done++;
 
                     // Log progress
-                    logLine(`[W${workerId}] OK record=${itemId}, matchResult=${r.matchResult} (${done}/${itemIds.length})`);
+                    logLine(`[W${workerId}] OK record=${itemId}, matchResult=${r.api_result['matchResult']} (${done}/${itemIds.length})`);
 
                     // If server indicates run stopped, honor it
                     if (r.runStatus && r.runStatus !== "running") {
@@ -446,7 +461,7 @@ $HtmlPage->ProjectHeader();
         const batchSize = parseInt(document.getElementById('batchSize').value, 10) || 50;
         const concurrency = parseInt(document.getElementById('concurrency').value, 10) || 5;
 
-        module.ajax('fetchNextBatch', {batchSize: batchSize}).then(batch => {
+        module.ajax('fetchNextBatch', {batchSize: batchSize, project_id: project_id}).then(batch => {
 
             //console.log('Received batch:', batch);
 

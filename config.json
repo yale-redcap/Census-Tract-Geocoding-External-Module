@@ -50,6 +50,11 @@
                 "name": "Census Geocoder Batch Process",
                 "icon": "fas fa-file-alt",
                 "url": "batch/batch.php"
+            },
+            {
+                "name": "Census Geocoder workshop",
+                "icon": "fas fa-file-alt",
+                "url": "workshop/workshop.php"
             }
         ]
     },

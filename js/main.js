@@ -488,7 +488,6 @@ $(document).ready(() => {
             matchResult: '', // summary of the geocoding result - either 'not matched', 'matched', or 'multiple matches'
             censuses: [], // list of census objects (with benchmark/vintage, matchedAddress, count of geographies) that were processed
             allMatchedAddresses: new Set(), // all addresses matched by TigerWeb
-            matchResultCode: '', // code indicating the match result for the geocoded address, e.g. 'Exact Match', 'No Match', etc. - this is determined based on the match result code(s) returned from TigerWeb for the geocoded address(es) across the censuses processed
             reportText: '' // full text of the geocode report to be injected into the UI or reported to the console
         };
     }
@@ -522,14 +521,16 @@ $(document).ready(() => {
      */
     function updateGeocodeReportObject(census, api = geocodeAPI.addressLookup) {
 
+        console.log('Updating geocode report object with census:', census);
+
         // push to the cumulative summary of censuses processed up to this point
         geocodeReport.censusSummaries.push({
             benchmarkVintage: census.benchmark_vintage,
             geocodedAddress: census.geocodedAddress,
             geocodedLocation: census.geocodedLocation,
             geocodeUpdates: census.geocodeUpdates,
-            matchResultCode: census.matchResultCode,
-            matchResult: census.matchResult
+            matchResult: census.matchResult,
+            similarityScore: census.similarityScore
         });
 
         // update the set of all matched addresses with the matched address(es) returned from the API for this census
@@ -554,6 +555,9 @@ $(document).ready(() => {
         let timestamp = new Date().toLocaleString();
         let anyGeocodesUpdated = geocodeReport.censusSummaries.some(c => c.geocodeUpdates.length > 0);
 
+        console.log('Final geocode report object:', geocodeReport);
+        console.log('Any geocodes updated across censuses processed?', anyGeocodesUpdated);
+
         reportLines.push(`Geocode Report on ${timestamp}`);
         
         if (api === geocodeAPI.addressLookup) {
@@ -565,7 +569,7 @@ $(document).ready(() => {
         }
         else if (api === geocodeAPI.locationLookup) {
 
-            geocodeReport.matchResult = anyGeocodesUpdated ? 'matched' : 'not matched';
+            //geocodeReport.matchResult = anyGeocodesUpdated ? 'LOCATION_MATCH' : 'NO_MATCH';
             reportLines.push(`Geocoding Method: Single Location Lookup API`);
             //reportLines.push(`Location Match Result: ${geocodeReport.matchResult}`);
         }
@@ -583,16 +587,30 @@ $(document).ready(() => {
                 reportLines.push(`\nBenchmark-Vintage: ${census.benchmarkVintage}`);
                 if (api===geocodeAPI.addressLookup) {
 
+                    reportLines.push(`Match Result: ${census.matchResult}`);
+                    reportLines.push(`Similarity Score: ${census.similarityScore}`);
+
                     if (census.geocodedAddress) {
+
                         reportLines.push(`Geocoded Address: ${census.geocodedAddress}`);
-                        reportLines.push(`Match Result: ${census.matchResult}`);
+
                         // store the match result
-                        geocodeData[geocodeMatchResultField] = census.matchResult;
+                        if ( geocodeMatchResultField ) {
+
+                            geocodeData[geocodeMatchResultField] = census.matchResult;
+                        }
                     }
                 }
                 else if (api===geocodeAPI.locationLookup) {
+
                     if (census.geocodedLocation.latitude && census.geocodedLocation.longitude) {
                         reportLines.push(`Geocoded Location: latitude ${census.geocodedLocation.latitude}, longitude ${census.geocodedLocation.longitude}`);
+                    }
+
+                    // store the match result
+                    if ( geocodeMatchResultField ) {
+
+                        geocodeData[geocodeMatchResultField] = census.matchResult;
                     }
                 }
                 reportLines.push(`${census.geocodeUpdates.length} REDCap field(s) updated`);
@@ -602,6 +620,12 @@ $(document).ready(() => {
                 for (const update of census.geocodeUpdates) {
                     reportLines.push(`  - ${update.redcapFieldName} => ${update.value} from TigerWeb attribute ${update.tigerWebAttribKey}`);
                 }
+            }
+
+            // no geocoded addresses returned from any census, so no match
+            if ( geocodeMatchResultField && geocodeData[geocodeMatchResultField].length === 0 ) {
+                
+                geocodeData[geocodeMatchResultField] = "NO_MATCH";
             }
         }
 
@@ -614,7 +638,10 @@ $(document).ready(() => {
         geocodeReport.reportText = reportLines.join('\n');
 
         // stash it in the geocodeData object so it's available for transfer to the UI when transferGeocodeDataToREDCapForm is called at the end of processing all censuses
-        geocodeData[geocodeReportField] = geocodeReport.reportText;
+        if ( geocodeReportField ) {
+
+            geocodeData[geocodeReportField] = geocodeReport.reportText;
+        }
     }
 
     /**
@@ -767,6 +794,27 @@ $(document).ready(() => {
         }
     }
 
+    function isEmpty(x) {
+        
+        if (typeof x === 'undefined' || x === null) {
+            return true;
+        }
+        // empty string
+        if ( typeof x === 'string' && x.trim().length === 0) {
+            return true;
+        }
+        // empty array
+        if (Array.isArray(x) && x.length === 0) {
+            return true;
+        }
+        // empty object
+        if (typeof x === 'object' && !Array.isArray(x) && Object.keys(x).length === 0) {
+            return true;
+        }
+
+        return false;
+    }
+
     /**
      * Process a single census:
      * (1) retrieves geocode data from the Census API based on the address field value and the census benchmark/vintage, 
@@ -842,7 +890,10 @@ $(document).ready(() => {
 
                     console.log('downloadCensusData: address lookup response data:', data);
 
-                    const addressMatches = data?.result?.addressMatches;
+                    const addressMatches = data?.apiResults?.addressMatches;
+
+                    census.matchResult = data?.similarityResults?.matchResult; // as determined by AddressMatcher::compare
+                    census.similarityScore = data?.similarityResults?.similarityScore; // as determined by AddressMatcher::compare, on a scale of 0 to 100
 
                     if (addressMatches && addressMatches.length > 0) {
 
@@ -854,16 +905,18 @@ $(document).ready(() => {
                         // to aid in resolving ambiguous matches
                         // setGeocodeReportAllMatchedAddresses(addressMatches);
                         census.matchedAddresses = addressMatches.map(match => match.matchedAddress);
-                        census.matchResult = data?.matchResult?.result; // as determined by AddressMatcher::compare
                     }
                 }
                 else if (api === geocodeAPI.locationLookup) {
 
-                    census.lookupTable = data?.result?.geographies;
+                    census.lookupTable = data?.result?.geographies || null; // the geographies returned from the API for this location, which will be processed for data extraction if present
                     census.geocodedLocation.latitude = data?.result?.input?.location?.y;
-                    census.geocodedLocation.longitude = data?.result?.input?.location?.x;   
+                    census.geocodedLocation.longitude = data?.result?.input?.location?.x;
+                    
+                    census.matchResult = isEmpty(census.lookupTable) ? 'NO_MATCH' : 'LOCATION_MATCH';
 
-                    //console.log('downloadCensusData: location lookup response data:', data);
+                    console.log('downloadCensusData: location lookup response data:', data);
+                    console.log('downloadCensusData: census.lookupTable:', census.lookupTable);
                 }
 
                 if (census.lookupTable) {
