@@ -5,7 +5,6 @@ use Exception;
 use ExternalModules\AbstractExternalModule;
 use ExternalModules\ExternalModules;
 
-require_once "AddressMatcher.php";
 require_once "AddrSimScore.php";
 
 class CensusExternalModule extends AbstractExternalModule
