@@ -1,6 +1,6 @@
 $(document).ready(() => {
 
-    console.log('Census Geocoder loaded');
+    //console.log('Census Geocoder loaded');
 
     // apparently this is how one implements an enum in JavaScript
     const geocodeAPI = Object.freeze({
@@ -45,10 +45,10 @@ $(document).ready(() => {
     // A consolidated mapping of all Tiger Web attribute keys to REDCap field names across the censuses processed.
     const geocodeFieldMappings = newGeocodeFieldMappings();
 
-    console.log('censuses:', censuses);
-    console.log('tt_censusBenchmarks', module.tt('censusBenchmarks'));
-    console.log('censusBenchmarks:', censusBenchmarks);
-    console.log('geocodeFieldMappings:', geocodeFieldMappings);
+    //console.log('censuses:', censuses);
+    //console.log('tt_censusBenchmarks', module.tt('censusBenchmarks'));
+    //console.log('censusBenchmarks:', censusBenchmarks);
+    //console.log('geocodeFieldMappings:', geocodeFieldMappings);
     //console.log('urls:', urls);
     //console.log('geocodeData:', geocodeData);
     //console.log('geocodeAPI:', geocodeAPI);
@@ -186,8 +186,8 @@ $(document).ready(() => {
             }
         }
 
-        console.log('$processedOptgroup:', $processedOptgroup);
-        console.log('$unprocessedOptgroup:', $unprocessedOptgroup);
+        //console.log('$processedOptgroup:', $processedOptgroup);
+        //console.log('$unprocessedOptgroup:', $unprocessedOptgroup);
 
         $bvSelect.empty().append($defaultOption, $processedOptgroup, $unprocessedOptgroup);
     }
@@ -522,7 +522,7 @@ $(document).ready(() => {
      */
     function updateGeocodeReportObject(census, api = geocodeAPI.addressLookup) {
 
-        console.log('Updating geocode report object with census:', census);
+        //console.log('Updating geocode report object with census:', census);
 
         // push to the cumulative summary of censuses processed up to this point
         geocodeReport.censusSummaries.push({
@@ -556,8 +556,8 @@ $(document).ready(() => {
         let timestamp = new Date().toLocaleString();
         let anyGeocodesUpdated = geocodeReport.censusSummaries.some(c => c.geocodeUpdates.length > 0);
 
-        console.log('Final geocode report object:', geocodeReport);
-        console.log('Any geocodes updated across censuses processed?', anyGeocodesUpdated);
+        //console.log('Final geocode report object:', geocodeReport);
+        //console.log('Any geocodes updated across censuses processed?', anyGeocodesUpdated);
 
         reportLines.push(`Geocode Report on ${timestamp}`);
         
@@ -797,7 +797,7 @@ $(document).ready(() => {
                 transferGeocodeDataToREDCapForm();
 
                 // log the geocode report object to the console for debugging
-                console.log('Geocoder: Final report:', geocodeReport.reportText);
+                //console.log('Geocoder: Final report:', geocodeReport.reportText);
             }
         }
     }
@@ -897,7 +897,7 @@ $(document).ready(() => {
 
                 if (api === geocodeAPI.addressLookup) {
 
-                    console.log('downloadCensusData: address lookup response data:', data);
+                    //console.log('downloadCensusData: address lookup response data:', data);
 
                     const addressMatches = data?.apiResults?.addressMatches;
 
@@ -924,8 +924,8 @@ $(document).ready(() => {
                     
                     census.matchResult = isEmpty(census.lookupTable) ? 'NO_MATCH' : 'LOCATION_MATCH';
 
-                    console.log('downloadCensusData: location lookup response data:', data);
-                    console.log('downloadCensusData: census.lookupTable:', census.lookupTable);
+                    //console.log('downloadCensusData: location lookup response data:', data);
+                    //console.log('downloadCensusData: census.lookupTable:', census.lookupTable);
                 }
 
                 if (census.lookupTable) {

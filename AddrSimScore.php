@@ -133,19 +133,51 @@ final class AddrSimScore
      * returns:
      * 
      *  - EXACT_MATCH ( score == 1 )
-     *  - GOOD_MATCH ( states and zips match, score >= 0.9 )
-     *  - FAIR_MATCH ( states and zips match, score >= 0.75 )  
-     *  - POOR_MATCH ( states and zips match, score > 0 )
+     *  - INEXACT_MATCH ( 0 < score < 1 )
      *  - NO_MATCH ( score == 0 )
-     *  - STATE_MISMATCH ( states do not match, score > 0 )
-     *  - ZIP_MISMATCH ( zips do not match, score > 0 )
-     *  - STATE_ZIP_MISMATCH ( states and zips do not match, score > 0 )
      */
     static function address_similarity(string $a, string $b, bool $stripUnit = true): array
     {
         $na = self::normalize_address($a, $stripUnit);
         $nb = self::normalize_address($b, $stripUnit);
         $maxLen = max(strlen($na), strlen($nb));
+
+        $matchResult = '';
+
+        if ( $na !== '' || $nb !== '' ) {
+
+            // #edits required to transform na into nb (or vice versa)
+            $dist = levenshtein($na, $nb);
+
+            // compute a score in [0,1] where 1 means identical and 0 means completely different
+            $score = 1.0 - ($dist / $maxLen);
+
+            // Clamp just in case
+            if ($score < 0.0) $score = 0.0;
+            if ($score > 1.0) $score = 1.0;
+
+            if ( $score == 1.0 ) {
+                $matchResult = 'EXACT_MATCH';
+            }
+            else if ( $score > 0.0 ) {
+                $matchResult = 'INEXACT_MATCH';
+            }
+            else {
+                $matchResult = 'NO_MATCH';
+            }  
+        }
+        
+        return [
+            'addressA' => $a,
+            'addressB' => $b,
+            'normalizedA' => $na,
+            'normalizedB' => $nb,
+            'matchResult' => $matchResult,
+            'similarityScore' => $score,
+            'levenshteinDistance' => $dist,
+        ];
+
+        /*
 
         $retObj = [
             'addressA' => $a,
@@ -188,5 +220,6 @@ final class AddrSimScore
             'levenshteinDistance' => $dist,
             'matchResult' => $matchResult
         ]);
+        */
     }
 }

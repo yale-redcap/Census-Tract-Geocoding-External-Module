@@ -18,6 +18,31 @@ $module->initializeJavascriptModuleObject();
 
 $redcap_csrf_token = $module->getCSRFToken();
 
+$censuses = $module->getSubSettings('censuses') ?? [];
+
+$defaultBenchmarkVintage =$censuses[0]['benchmark_vintage'] ?? null;
+
+if ( !$defaultBenchmarkVintage ) {
+    echo "Error: No benchmark-vintage found in census configurations. Please configure the Census Geocoder EM.";
+    exit();
+}
+
+$bv = $module->fetchBenchmarkVintageChoicesFromEmLog()['bv'] ?? null;
+
+$bvopts = "";
+
+if (!$bv) {
+    $bvopts = "<option value='$defaultBenchmarkVintage' selected>$defaultBenchmarkVintage</option>";
+}
+else {
+    foreach ($bv as $b) {
+        $name = $b['name'];
+        $value = $b['value'];
+        $selected = ($value === $defaultBenchmarkVintage) ? "selected" : "";
+        $bvopts .= "<option value='$value' $selected>$name</option>";
+    }
+}
+
 use REDCap;
 use HtmlPage;
 
@@ -25,21 +50,47 @@ $HtmlPage = new HtmlPage();
 $HtmlPage->ProjectHeader();
 /*
 echo "<pre>";
-echo print_r($batchApiRequirements, true);
+echo $bvopts;
 echo "</pre>";
 exit();
 */
-
 ?>
-
-<script>
-</script>
 
 <style>
 
-    table.geocoder-table * {
+    table.geocoder-table td, table.geocoder-table th {
+        /*padding-top: 5px;
+        padding-bottom: 5px;*/
+        vertical-align: middle;
+    }
+/*
+    table.geocoder-table th {
+        background-color: #6c757d;
+        border-color: #6c757d;
+        color: white;
+    }
+*/
+    table.geocoder-table td label {
+        margin-bottom: 0;
+        margin-right: 10px;
+    }
+
+    table.geocoder-table input[type=radio] {
+        position: relative; 
+        top: 2px;
+    }
+
+    table.geocoder-table select {
         padding-top: 5px;
         padding-bottom: 5px;
+        padding-left: 5px;
+        border-radius: 4px;
+        border: 1px solid #ccc;
+        min-width: 50px;
+        max-width: 300px;
+        /* ellipsis for long text */
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     #status {
@@ -99,27 +150,41 @@ exit();
     <p>Abandon all hope, ye who enter here.</p>
 
     <div class="row">
-        <div class="col-sm-6">
 
-            <h6>Configuration</h6>
+        <div class="col-lg-6">
+
+            <h6>Configuration / Execution Items</h6>
 
             <table class="table table-bordered geocoder-table">
                 <tr>
-                    <th>Field Name</th>
+                    <th>Item Name</th>
                     <th>Value</th>
                 </tr>
+
                 <tr>
                     <td>Address field</td>
                     <td><?php echo $module->getProjectSetting('address'); ?></td>
                 </tr>
+
                 <tr>
                     <td>Match result field</td>
                     <td><?php echo $module->getProjectSetting('geocode_match_result'); ?></td>
                 </tr>
+
                 <tr>
                     <td>Batch selection field</td>
                     <td><?php echo $module->getProjectSetting('batch_selection_field') ?? 'N/A'; ?></td>
                 </tr>
+
+                <tr>
+                    <td>Benchmark - Vintage</td>
+                    <td>
+                        <select id="benchmarkVintage">
+                            <?php echo $bvopts; ?>
+                        </select>
+                    </td>
+                </tr>
+
                 <tr>
                     <td>Batch size</td>
                     <td>
@@ -134,20 +199,34 @@ exit();
                         </select>
                     </td>
                 </tr>
+
                 <tr>
                     <td>Concurrency (simultaneous requests)</td>
                     <td>
                         <select id="concurrency">
-                            <option value="1">1</option>
-                            <option value="5" selected>5</option>
+                            <option value="2">2</option>
+                            <option value="4">4</option>
+                            <option value="6">6</option>
+                            <option value="8" selected>8</option>
                             <option value="10">10</option>
+                            <option value="12">12</option>
                         </select>
                     </td>
                 </tr>
 
+                <tr>
+                    <td>Include NO_MATCH in Next Batch</td>
+                    <td>
+                        <label><input type="radio" name="includeNoMatch" value="0" checked>&nbsp;No</label>
+                        <label><input type="radio" name="includeNoMatch" value="1">&nbsp;Yes</label>
+                    </td>
+                </tr>
+
             </table>
+
         </div>
-        <div class="col-sm-6">
+
+        <div class="col-lg-6">
 
             <h6>Progress Summary</h6>
 
@@ -163,16 +242,24 @@ exit();
                 </tbody>
             </table>
         </div>
+
     </div>
 
-    <button class="btn btn-secondary" id="start">Next Batch</button>
-    <button class="btn btn-secondary" id="pause" disabled>Pause</button>
-    <button class="btn btn-secondary" id="resume" disabled>Resume</button>
-    <button class="btn btn-secondary" id="stop" disabled>Stop</button>
+    <div class="row">
 
-    <div id="status"></div>
+        <div class="col-lg-12">
 
-    <div id="log" class="yes3-scrolling-container" style="max-height: 200px; height: 200px;"></div>
+            <button class="btn btn-secondary" id="start">Next Batch</button>
+            <button class="btn btn-secondary" id="pause" disabled>Pause</button>
+            <button class="btn btn-secondary" id="resume" disabled>Resume</button>
+            <button class="btn btn-secondary" id="stop" disabled>Stop</button>
+
+            <div id="status"></div>
+
+            <div id="log" class="yes3-scrolling-container" style="max-height: 200px; height: 200px;"></div>
+        
+        </div>
+    </div>
 
 </div>
 
@@ -191,7 +278,7 @@ exit();
     // add get parms to processUrl
     //processUrl += `?pid=${project_id}`;
 
-    console.log("Batch module JS initialized. API endpoints:", { startUrl, stopUrl, processUrl, stopBeaconUrl });
+    //console.log("Batch module JS initialized. API endpoints:", { startUrl, stopUrl, processUrl, stopBeaconUrl });
 
     const record_list = [];
 
@@ -226,7 +313,7 @@ exit();
 
         fd.append('redcap_csrf_token', redcap_csrf_token);
 
-        console.log('Posting to', url, 'with body', Object.fromEntries(fd.entries()), 'and reqId', reqId);
+        //console.log('Posting to', url, 'with body', Object.fromEntries(fd.entries()), 'and reqId', reqId);
 
         const res = await fetch(url, {
             method: "POST",
@@ -259,12 +346,12 @@ exit();
         return new Promise(r => setTimeout(r, ms));
     }
 
-    async function runBatch({ itemIds, concurrency = 6 }) {
+    async function runBatch({ itemIds, concurrency = 6, benchmarkVintage = null }) {
         // --- Create a server-side run ---
 
         const run = await postFormData(startUrl, { total: itemIds.length, project_id: project_id });
 
-        console.log("Run created:", run);
+        //console.log("Run created:", run);
 
         timeStarted = Date.now();
 
@@ -302,7 +389,7 @@ exit();
 
             setStatus(`${reason}. Completed=${done} Failed=${failed}.`);
 
-            console.log("Batch geocoding run stopped.");
+            //console.log("Batch geocoding run stopped.");
         }
 
         async function pauseNow(reason = "Paused") {
@@ -373,16 +460,16 @@ exit();
                     // a random delay to spread out requests and reduce chance of hitting rate limits.
                     await sleep(Math.random() * 500);
 
-                    console.log(`Worker ${workerId} processing item ${itemId}...`);
+                    //console.log(`Worker ${workerId} processing item ${itemId}...`);
 
                     const reqId = crypto.randomUUID(); // for tracing/logging
 
                     const thisProcessUrl = processUrl + `&xri=${reqId}`;
 
                     // call the API to process the item, save results to server, etc.
-                    const r = await postFormData(thisProcessUrl, { runId: runId, itemId: itemId, project_id: project_id }, { signal: controller.signal }, reqId);
+                    const r = await postFormData(thisProcessUrl, { runId: runId, itemId: itemId, project_id: project_id, benchmarkVintage: benchmarkVintage }, { signal: controller.signal }, reqId);
 
-                    console.log(`Worker ${workerId} processed item ${itemId}: r=`, r);
+                    //console.log(`Worker ${workerId} processed item ${itemId}: r=`, r);
 
                     done++;
 
@@ -456,12 +543,14 @@ exit();
 
         const batchSize = parseInt(document.getElementById('batchSize').value, 10) || 50;
         const concurrency = parseInt(document.getElementById('concurrency').value, 10) || 5;
+        const includeNoMatch = document.querySelector('input[name="includeNoMatch"]:checked').value === "1";
+        const benchmarkVintage = document.getElementById('benchmarkVintage').value;
 
-        module.ajax('fetchNextBatch', {batchSize: batchSize, project_id: project_id}).then(batch => {
+        module.ajax('fetchNextBatch', {batchSize: batchSize, project_id: project_id, includeNoMatch: includeNoMatch}).then(batch => {
 
             //console.log('Received batch:', batch);
 
-            runBatch({ itemIds: batch, concurrency: concurrency });
+            runBatch({ itemIds: batch, concurrency: concurrency, benchmarkVintage: benchmarkVintage });
 
         }).catch(err => {
 
@@ -481,7 +570,7 @@ exit();
 
         module.ajax('getMatchResultTable', {}).then(result => {
 
-            console.log('Match result table:', result);
+            //console.log('Match result table:', result);
 
             const $table = $('table#match-result-table');
 

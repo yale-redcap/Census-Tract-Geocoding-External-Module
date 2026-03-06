@@ -27,6 +27,10 @@ $runId = $_POST["runId"] ?? null;
 
 if ($runId === null) json_out(["error" => "Missing runId"], 400);
 
+$benchmarkVintage = $_POST["benchmarkVintage"] ?? null;
+
+if ($benchmarkVintage === null) json_out(["error" => "Missing Benchmark-Vintage"], 400);
+
 $runState = new RunState();
 
 $state = $runState->read($runId);
@@ -48,7 +52,7 @@ try {
   // --- Do the upstream API call and persist ---
   // call_upstream_api_and_persist($itemId);
 
-  $api_result = mark_processed($itemId); // if that's how your system works
+  $api_result = mark_processed($itemId, $benchmarkVintage); // if that's how your system works
 
   // update run counters best-effort
   $runState->update($runId, function($s) {
@@ -74,27 +78,27 @@ function already_processed($itemId): bool {
   return false;
 }
 
-function mark_processed($itemId): array {
+function mark_processed($itemId, $benchmarkVintage): array {
     global $module;
 
-    $apiRequirements = $module->getApiRequirements( $itemId);
+    $apiRequirements = $module->getApiRequirements( $itemId );
 
   	$address = urlencode(preg_replace("/[^a-zA-Z0-9 ,]/","",$apiRequirements["address"] ?? ""));
 
-	$benchmark_vintage = $apiRequirements["benchmark_vintage"] ?? null;
+	//$benchmark_vintage = $apiRequirements["benchmark_vintage"] ?? null;
 
-    if ( !$benchmark_vintage || !$address ) {
+    if ( !$benchmarkVintage || !$address ) {
 
         return [    
             "error" => "Missing required data for API call",
             "record" => $itemId,
             "address" => $address,
-            "benchmark_vintage" => $benchmark_vintage,
+            "benchmarkVintage" => $benchmarkVintage,
             "apiRequirements" => $apiRequirements
         ];
     }
 
-    $url = 'https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress?address='.$address.'&'.$module->getSharedArgsBenchmark($benchmark_vintage);
+    $url = 'https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress?address='.$address.'&'.$module->getSharedArgsBenchmark($benchmarkVintage);
 
 	$ch = curl_init();
 	curl_setopt($ch, CURLOPT_URL, $url);
@@ -112,6 +116,8 @@ function mark_processed($itemId): array {
 
     $apiResults = $data['result'] ?? null;
 
+    $apiResults["benchmarkVintage"] = $benchmarkVintage;
+
     $saveResult = $module->saveApiResults( $apiRequirements, $apiResults );
 
     //$inputAddress = $data['result']['input']['address']['address'] ?? '';
@@ -119,6 +125,7 @@ function mark_processed($itemId): array {
     //$matchedAddress = $data['result']['addressMatches'][0]['matchedAddress'] ?? '';
 
     $returnData = [
+        "benchmarkVintage" => $benchmarkVintage,
         "matchResult" => $saveResult["matchResult"] ?? "",
         "matchReport" => $saveResult["matchReport"] ?? "",
         "inputAddress" => $saveResult["inputAddress"] ?? "",

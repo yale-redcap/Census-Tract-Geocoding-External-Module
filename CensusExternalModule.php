@@ -554,6 +554,8 @@ class CensusExternalModule extends AbstractExternalModule
 
         $batchSize = $payload["batchSize"] ?? 50;
 
+        $includeNoMatch = $payload["includeNoMatch"] ?? false;
+
         $batch_selection_field = $this->getProjectSetting('batch_selection_field') ?? null;
         $match_result_field = $this->getProjectSetting('geocode_match_result') ?? null;
         $address_field = $this->getProjectSetting('address') ?? null;
@@ -573,7 +575,15 @@ class CensusExternalModule extends AbstractExternalModule
             $params[] = $batch_selection_field;
         }
 
-        $sql .= " where r.project_id = ? and a.value is not null and a.value <> '' and (m.value is null or m.value = '') limit ?";
+        if ( $includeNoMatch ) {
+
+            $nomatchCondition = " or m.value = 'NO_MATCH'";
+        }
+        else {
+            $nomatchCondition = "";
+        }
+
+        $sql .= " where r.project_id = ? and a.value is not null and a.value <> '' and (m.value is null or m.value = '' $nomatchCondition) limit ?";
 
         $params[] = $this->getProjectId();
         $params[] = $batchSize;
@@ -778,14 +788,19 @@ class CensusExternalModule extends AbstractExternalModule
         $matchedAddress = $addressMatches[0]["matchedAddress"] ?? "";
         $inputAddress = $apiResults["input"]["address"]["address"] ?? "";
 
+        $matchReport = "Geocode Report on " . date('n/j/Y, g:i:s A') . "\n"
+            . "Geocoding Method: Single Address Lookup API via batch\n"
+            . "Benchmark-Vintage: " . ($apiResults["benchmarkVintage"] ?? "unknown") . "\n"
+            . "Input Address: " . ($inputAddress ?? "unknown") . "\n";
+
         if ( !is_array($addressMatches) || count($addressMatches) === 0 ) {
 
-            $matchReport = "No address matches were found for the input address.";
+            $matchReport .= "Match Result: NO_MATCH\n";
 
             $data = [ $geocode_match_result_field => "NO_MATCH" ];
 
             if ( $geocode_report_field ) {
-                $data[$geocode_report_field] = "No address matches were found for the input address.";
+                $data[$geocode_report_field] = $matchReport;
             }
 
             $saveDataResponse = $this->saveDataVector( $record, $data );
@@ -796,6 +811,8 @@ class CensusExternalModule extends AbstractExternalModule
                 "saveDataResponse" => $saveDataResponse
             ];
         }
+
+        $matchReport .= "Matched Address: " . ($matchedAddress ?? "unknown") . "\n";
 
         $mappings = $apiRequirements['mappings'] ?? [];
 
@@ -883,7 +900,8 @@ class CensusExternalModule extends AbstractExternalModule
             $matchResult = "UNKNOWN";
         }
 
-        $matchReport = "This will be an actual report in good time.";
+        $matchReport .= "Match Result: " . $matchResult . "\n";
+
     /*
         if ( $geocode_match_result_field ) {
 
@@ -923,11 +941,6 @@ class CensusExternalModule extends AbstractExternalModule
             $data_array[$geocode_match_result_field] = $matchResult;
         }
 
-        if ( $geocode_report_field ) {
-
-            $data_array[$geocode_report_field] = $matchReport;
-        }
-
         if ( $geocode_matched_address_field ) {
 
             $data_array[$geocode_matched_address_field] = $matchedAddress;
@@ -939,6 +952,20 @@ class CensusExternalModule extends AbstractExternalModule
 
                 $data_array[$dataPoint["field"]] = $dataPoint["value"];
             }
+        }
+
+        $geocodedItemCount = count($data_array);
+
+        $matchReport .= "{$geocodedItemCount} REDCap field(s) updated.\n";
+        /*
+        foreach ( $data_array as $field_name => $value ) {
+
+            $matchReport .= " - " . $field_name . " => " . $value . "\n";
+        }
+        */
+        if ( $geocode_report_field ) {
+            
+            $data_array[$geocode_report_field] = $matchReport;
         }
 
         $saveDataResponse = $this->saveDataVector( $record, $data_array );
@@ -976,12 +1003,8 @@ FROM (
 ) t
 ORDER BY FIELD(match_result,
     'EXACT_MATCH',
-    'GOOD_MATCH',
-    'FAIR_MATCH',
-    'POOR_MATCH',
-    'STATE_MISMATCH',
-    'ZIP_MISMATCH',
-    'STATE_ZIP_MISMATCH',
+    'INEXACT_MATCH',
+    'LOCATION_MATCH',
     'NO_MATCH',
     'CLOSED_NO_MATCH'
 );";
