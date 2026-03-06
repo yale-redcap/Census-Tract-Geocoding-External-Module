@@ -22,6 +22,7 @@ $(document).ready(() => {
 
     // field names for the optional geocode match result and geocode report fields specified in the EM config
     const geocodeMatchResultField   = fields.geocodeMatchResultField;
+    const geocodeMatchedAddressField= fields.geocodeMatchedAddressField;
     const geocodeReportField        = fields.geocodeReportField;
 
     const addGeoCodeButton          = fields.addGeoCodeButton; // option to trigger geocoding via button(s) added to the UI, 
@@ -599,6 +600,12 @@ $(document).ready(() => {
 
                             geocodeData[geocodeMatchResultField] = census.matchResult;
                         }
+
+                        // store the geocoded address
+                        if ( geocodeMatchedAddressField ) {
+
+                            geocodeData[geocodeMatchedAddressField] = census.geocodedAddress;
+                        }
                     }
                 }
                 else if (api===geocodeAPI.locationLookup) {
@@ -658,6 +665,7 @@ $(document).ready(() => {
         for (const [fieldName, value] of Object.entries(geocodeData)) {
 
             const $field = $(`[name="${fieldName}"]`);
+
             if ($field.length && value) {
 
                 $field.val(value).change();
@@ -883,6 +891,7 @@ $(document).ready(() => {
                     data = JSON.parse(json);
                 } catch (e) {
                     // Bad JSON response
+                    console.error('Error parsing JSON response:', e, 'Response text:', json);
                     return reject(e);
                 }
 

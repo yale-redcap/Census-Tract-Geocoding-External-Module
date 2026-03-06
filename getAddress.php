@@ -1,6 +1,6 @@
 <?php namespace Vanderbilt\CensusExternalModule;
 
-use Vanderbilt\CensusExternalModule\AddressMatcher;
+require_once "AddrSimScore.php";
 
 if ($_POST['get']) {
 
@@ -30,9 +30,9 @@ if ($_POST['get']) {
 
     $data = json_decode($output, true);
 
-    $inputAddress = $data['result']['input']['address']['address'] ?? null;
+    $inputAddress = $data['result']['input']['address']['address'] ?? '';
 
-    $matchedAddress = $data['result']['addressMatches'][0]['matchedAddress'] ?? null;
+    $matchedAddress = $data['result']['addressMatches'][0]['matchedAddress'] ?? '';
 
     $returnData = [
         "inputAddress" => $inputAddress,
@@ -42,8 +42,6 @@ if ($_POST['get']) {
 
     if ($inputAddress || $matchedAddress) {
         
-        $module = new CensusExternalModule();
-
         $similarityResults = AddrSimScore::address_similarity($inputAddress, $matchedAddress);
         $returnData['similarityResults'] = $similarityResults;
     }

@@ -162,6 +162,10 @@ class CensusExternalModule extends AbstractExternalModule
 
             return $this->fetchNextBatch( $payload );
         }
+        else if ( $action === "getMatchResultTable" ) {
+
+            return $this->getMatchResultTable( $payload );
+        }
     }
 
 	function transitionOldSettings(){
@@ -405,6 +409,7 @@ class CensusExternalModule extends AbstractExternalModule
 
         $outputFields = [
             $this->getProjectSetting('geocode_match_result'),
+            $this->getProjectSetting('geocode_matched_address'),
             $this->getProjectSetting('geocode_report')
         ];
 
@@ -498,6 +503,7 @@ class CensusExternalModule extends AbstractExternalModule
 			"longitudeField" => $this->getProjectSetting('longitude'),
             "geocodeReportField" => $this->getProjectSetting('geocode_report'),
             "geocodeMatchResultField" => $this->getProjectSetting('geocode_match_result'),
+            "geocodeMatchedAddressField" => $this->getProjectSetting('geocode_matched_address'),
             "addGeoCodeButton" => $this->getProjectSetting('add_geocode_button'),
             "addBVDropdown" => $this->getProjectSetting('add_bv_dropdown'),
             "isSurvey" => $isSurvey,
@@ -683,6 +689,9 @@ class CensusExternalModule extends AbstractExternalModule
         // this is optional, so no error if not set
         $geocode_report_field = $this->getProjectSetting('geocode_report') ?? null;
 
+        // another optional
+        $geocode_matched_address_field = $this->getProjectSetting('geocode_matched_address') ?? null;
+
         foreach ( $censuses as $census ) {
                 
             if ( !$benchmark_vintage ) { $benchmark_vintage = $census["benchmark_vintage"] ?? null; }
@@ -746,11 +755,289 @@ class CensusExternalModule extends AbstractExternalModule
             "geocode_form_name" => $geocode_form_event["geocode_form_name"] ?? null,
             "geocode_event_id" => $geocode_form_event["geocode_event_id"] ?? null,
             "geocode_match_result_field" => $geocode_match_result_field,
+            "geocode_matched_address_field" => $geocode_matched_address_field,
             "geocode_report_field" => $geocode_report_field,
             "address_field_name" => $address_field,
             "address" => $address,
             "benchmark_vintage" => $benchmark_vintage,
             "mappings" => $mappings,
         ];
+    }
+
+    function saveApiResults( $apiRequirements, $apiResults ) {
+
+        $record = $apiRequirements["record"] ?? null;
+        $project_id = $apiRequirements["project_id"] ?? null;
+        $geocode_event_id = $apiRequirements["geocode_event_id"] ?? null;
+
+        $geocode_match_result_field = $apiRequirements["geocode_match_result_field"] ?? null;
+        $geocode_matched_address_field = $apiRequirements["geocode_matched_address_field"] ?? null;
+        $geocode_report_field = $apiRequirements["geocode_report_field"] ?? null;
+
+        $addressMatches = $apiResults["addressMatches"] ?? null;
+        $matchedAddress = $addressMatches[0]["matchedAddress"] ?? "";
+        $inputAddress = $apiResults["input"]["address"]["address"] ?? "";
+
+        if ( !is_array($addressMatches) || count($addressMatches) === 0 ) {
+
+            $matchReport = "No address matches were found for the input address.";
+
+            $data = [ $geocode_match_result_field => "NO_MATCH" ];
+
+            if ( $geocode_report_field ) {
+                $data[$geocode_report_field] = "No address matches were found for the input address.";
+            }
+
+            $saveDataResponse = $this->saveDataVector( $record, $data );
+
+            return [
+                "matchResult" => "NO_MATCH",
+                "matchReport" => $matchReport,
+                "saveDataResponse" => $saveDataResponse
+            ];
+        }
+
+        $mappings = $apiRequirements['mappings'] ?? [];
+
+        $dataVector = []; // will store the data values as we sweep through the grographies
+
+        foreach ( $mappings as $mapping){
+
+            if ( !$mapping['key'] || !$mapping['field']) {
+
+                continue; // skip this mapping if key or field is not set
+            }
+
+            $dataVector[] = [  
+                "field" => $mapping["field"] ?? null,
+                "value" => null
+            ];
+        }
+
+        $geodata = [];
+
+
+        $matchedAddresses = [];
+
+        foreach ( $addressMatches as $addressMatch ){
+
+            $matchedAddresses[] = $addressMatch["matchedAddress"] ?? null;
+        }
+
+        $geographies = $addressMatches[0]["geographies"] ?? [];
+
+        foreach ( $geographies as $geography ) {
+
+            // each geography is an array, although seemingly always having a single member
+            foreach ( $geography as $geo ) {
+
+                $geodata[] = $geo;
+            }
+        }
+        
+        // sort geodata by 'arealand' in desc order
+        // so most precise geographies contribute to the data
+        usort($geodata, function($a, $b) {
+
+            $areaA = $a["AREALAND"] ?? 0;
+            $areaB = $b["AREALAND"] ?? 0;
+
+            return $areaB <=> $areaA;
+        });
+
+        // accumulate the data vector by sweeping through the geographies from least precise to most precise
+
+        $K = count($dataVector);
+        
+        foreach ( $geodata as $geo ) {
+
+            foreach ( $mappings as $map ) {
+
+                $key = $map["key"];
+                $field = $map["field"];
+                $value = $geo[$key] ?? null;
+
+                if ( $value ) {
+
+                    for ($i=0; $i < $K; $i++) { 
+
+                        if ( $dataVector[$i]["field"] === $field ) {
+
+                            $dataVector[$i]["value"] = $value;
+
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        $simResults = AddrSimScore::address_similarity( $inputAddress, $matchedAddress );
+
+        if ( isset($simResults["matchResult"]) ) {
+
+            $matchResult = $simResults["matchResult"];
+        }
+        else {
+
+            $matchResult = "UNKNOWN";
+        }
+
+        $matchReport = "This will be an actual report in good time.";
+    /*
+        if ( $geocode_match_result_field ) {
+
+            $dataVector[] = [
+                "key" => "match_result",
+                "field" => $geocode_match_result_field,
+                "value" => $matchResult
+            ];
+        }
+
+        if ( $geocode_report_field ) {
+
+            $dataVector[] = [
+                "key" => "match_report",
+                "field" => $geocode_report_field,
+                "value" => $matchReport
+            ];
+        }
+
+        if ( $geocode_matched_address_field ) {
+
+            $dataVector[] = [
+                "key" => "matched_address",
+                "field" => $geocode_matched_address_field,
+                "value" => $matchedAddress
+            ];
+        }
+
+        /*
+            SAVE THE DATA!
+        */
+
+        $data_array = [];
+
+        if ( $geocode_match_result_field) {
+
+            $data_array[$geocode_match_result_field] = $matchResult;
+        }
+
+        if ( $geocode_report_field ) {
+
+            $data_array[$geocode_report_field] = $matchReport;
+        }
+
+        if ( $geocode_matched_address_field ) {
+
+            $data_array[$geocode_matched_address_field] = $matchedAddress;
+        }
+
+        foreach ( $dataVector as $dataPoint ) {
+
+            if ( $dataPoint["field"] && $dataPoint["value"] !== null ) {
+
+                $data_array[$dataPoint["field"]] = $dataPoint["value"];
+            }
+        }
+
+        $saveDataResponse = $this->saveDataVector( $record, $data_array );
+
+        return [
+            'dataVector' => $dataVector,
+            'inputAddress' => $inputAddress,
+            'matchedAddress' => $matchedAddress,
+            'matchedAddresses' => $matchedAddresses,
+            'geodata' => $geodata,
+            'matchResult' => $matchResult,
+            'matchReport' => $matchReport,
+            'data_array' => $data_array,
+            'saveDataResponse' => $saveDataResponse,
+            'mappings' => $mappings
+        ];
+    }
+
+    function getMatchResultTable(){
+
+        $sql = "
+SELECT
+    match_result,
+    match_result_count,
+    SUM(match_result_count) OVER () AS total_count,
+    ROUND(100 * match_result_count / SUM(match_result_count) OVER (), 2) AS pct_of_total
+FROM (
+    SELECT
+        m.value AS match_result,
+        COUNT(*) AS match_result_count
+    FROM redcap_data2 m
+    WHERE m.project_id = ?
+      AND m.field_name = ?
+    GROUP BY m.value
+) t
+ORDER BY FIELD(match_result,
+    'EXACT_MATCH',
+    'GOOD_MATCH',
+    'FAIR_MATCH',
+    'POOR_MATCH',
+    'STATE_MISMATCH',
+    'ZIP_MISMATCH',
+    'STATE_ZIP_MISMATCH',
+    'NO_MATCH',
+    'CLOSED_NO_MATCH'
+);";
+        
+        $params = [
+            $this->getProjectId(),
+            $this->getProjectSetting('geocode_match_result')
+        ];
+
+        $result = $this->query($sql, $params);
+
+        $table = [];
+
+        $total = 0;
+
+        if ( $result && $result->num_rows > 0 ) {
+
+            while ( $row = $result->fetch_assoc() ) {
+
+                $total += $row["match_result_count"] ?? 0;
+
+                $table[] = [
+                    "match_result" => $row["match_result"],
+                    "match_result_count" => $row["match_result_count"],
+                    "pct_of_total" => $row["pct_of_total"]
+                ];
+            }
+
+            $table[] = [
+                "match_result" => "TOTAL",
+                "match_result_count" => $total,
+                "pct_of_total" => 100
+            ];
+        }
+
+        return $table;
+    }
+
+    function saveDataVector( $record, $data ) {
+
+        $recordIdField = $this->getRecordIdField();
+
+        $data[$recordIdField] = $record;
+
+        $data_json = json_encode([
+            $data
+        ]);
+
+        $params = [
+            "dataFormat" => "json",
+            "data" => $data_json,
+            "dataLogging" => false
+        ];
+
+        $saveDataResponse = \REDCap::saveData($params);
+
+        return $saveDataResponse;
     }
 }

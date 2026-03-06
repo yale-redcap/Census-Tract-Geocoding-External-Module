@@ -3,6 +3,8 @@
 function json_out($data, int $code = 200): void {
   http_response_code($code);
   header('Content-Type: application/json');
+  header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+  header('Pragma: no-cache');
   echo json_encode($data);
   exit;
 }

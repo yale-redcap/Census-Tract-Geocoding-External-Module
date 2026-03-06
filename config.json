@@ -37,7 +37,7 @@
 
 	"enable-every-page-hooks-on-system-pages": true,
 
-    "auth-ajax-actions": [ "fetchCensusBenchmarks", "fetchNextBatch" ],
+    "auth-ajax-actions": [ "fetchCensusBenchmarks", "fetchNextBatch", "getMatchResultTable"],
 
     "links": {
         "project": [
@@ -47,7 +47,7 @@
                 "url": "https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_attribute_glossary.html?"
             },
             {
-                "name": "Census Geocoder Batch Process",
+                "name": "Census Geocoder Batch Processing",
                 "icon": "fas fa-file-alt",
                 "url": "batch/batch.php"
             },
@@ -73,6 +73,19 @@
 			"repeatable": false,
             "autocomplete": false
 		},
+        {
+            "key": "geocode_matched_address",
+            "name": "Optional text field to populate with the matched address returned by the API",
+            "required": false,
+            "type": "field-list",
+            "repeatable": false,
+            "autocomplete": false,
+            "branchingLogic": {
+                "field": "address",
+                "op": "<>",
+                "value": ""
+            }
+        },
         {
 			"key": "latitude",
 			"name": "Optional field Containing the Latitude (if address not found)",

@@ -6,20 +6,24 @@ use Throwable;
 require_once __DIR__ . "/RunState.php";
 require_once __DIR__ . "/json.php";
 
-$project_id = $_POST["project_id"] ?? null; // allow form-data override
+//$project_id = $_POST["project_id"] ?? null;
 
 // establish project context for EM functions
-$_GET['pid'] = $project_id;
+//$_GET['pid'] = $project_id;
 
-$module = new CensusExternalModule();
+//if (!isset($_GET['pid']) || $_GET['pid'] !== $project_id) {
+//    json_out(["error" => "Missing the dang project_id: " . $project_id . ", received: " . ($_GET['pid'] ?? 'null')], 400);
+//}
 
-$itemId = $_POST["itemId"] ?? null; // allow form-data override
+//$module = new CensusExternalModule();
+
+$itemId = $_POST["itemId"] ?? null; 
 
 if ($itemId === null) json_out(["error" => "Missing itemId"], 400);
 
 if ($project_id === null) json_out(["error" => "Missing project_id"], 400);
 
-$runId = $_POST["runId"] ?? null; // allow form-data override for testing via browser
+$runId = $_POST["runId"] ?? null; 
 
 if ($runId === null) json_out(["error" => "Missing runId"], 400);
 
@@ -106,39 +110,30 @@ function mark_processed($itemId): array {
 
     $data = json_decode($output, true);
 
-    $inputAddress = $data['result']['input']['address']['address'] ?? null;
+    $apiResults = $data['result'] ?? null;
 
-    $matchedAddress = $data['result']['addressMatches'][0]['matchedAddress'] ?? null;
+    $saveResult = $module->saveApiResults( $apiRequirements, $apiResults );
 
-    $matchResult = null;
-    $matchResultReasons = null;
+    //$inputAddress = $data['result']['input']['address']['address'] ?? '';
 
-    if ($inputAddress && $matchedAddress) {
-        
-        //$module = new CensusExternalModule();
+    //$matchedAddress = $data['result']['addressMatches'][0]['matchedAddress'] ?? '';
 
-        $compareResults = AddressMatcher::compare($inputAddress, $matchedAddress);
-        $matchResult = $compareResults["result"] ?? null;
-        $matchResultReasons = $compareResults["reasons"] ?? null;
-
-        // the comparison fails but the API did return a match, so we'll call it an inexact match instead of no match
-        if ($matchResult === "NO_MATCH") {
-
-            $matchResult = "INEXACT_MATCH";
-        }
-    }
-    else if ($inputAddress) {
-        
-        $matchResult = "NO_MATCH";
-    }
-
-    return [
-        "error" => null,
-        "inputAddress" => $inputAddress,
-        "matchedAddress" => $matchedAddress,
-        "matchResult" => $matchResult ?? null,
-        "matchResultReasons" => $matchResultReasons ?? null,
-        "data" => $data
+    $returnData = [
+        "matchResult" => $saveResult["matchResult"] ?? "",
+        "matchReport" => $saveResult["matchReport"] ?? "",
+        "inputAddress" => $saveResult["inputAddress"] ?? "",
+        "matchedAddress" => $saveResult["matchedAddress"] ?? "",
+        "matchedAddresses" => $saveResult["matchedAddresses"] ?? [],
+        "dataVector" => $saveResult["dataVector"] ?? null,
+        "geodata" => $saveResult["geodata"] ?? null,
+        "data_array" => $saveResult["data_array"] ?? null,
+        "saveDataResponse" => $saveResult["saveDataResponse"] ?? null,
+        "mappings" => $saveResult["mappings"] ?? null,
+        //"apiResults" => $data['result'] ?? null,
+        //"apiRequirements" => $apiRequirements,
+        //"saveResult" => $saveResult
     ];
+
+    return $returnData;
 }
 

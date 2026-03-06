@@ -2,11 +2,16 @@
 
 use RuntimeException;
 use Throwable;
-
+/**
+ * Functions to manage batch run state, using the PHP temp file system and file locks.
+ * 
+ * @package Vanderbilt\CensusExternalModule
+ */
 final class RunState {
     
     private string $dir;
 
+    // Establish a directory for run state files, ensuring it's secure and writable
     public function __construct() {
 
         $this->dir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR)
@@ -29,6 +34,7 @@ final class RunState {
         }
     }
 
+    // Generate a safe file path for a given runId, validating the format to prevent directory traversal
     private function path(string $runId): string {
 
         if (!preg_match('/^[a-f0-9]{32}$/', $runId)) {
@@ -37,7 +43,9 @@ final class RunState {
         return $this->dir . DIRECTORY_SEPARATOR . "{$runId}.json";
     }
 
+    // Create a new run state file with a unique runId and initial data, returning the runId
     public function create(array $data): string {
+
         $runId = bin2hex(random_bytes(16)); // 32 hex chars
 
         $path = $this->path($runId);
@@ -55,6 +63,7 @@ final class RunState {
         return $runId;
     }
 
+    // Read the state of a run by its runId
     public function read(string $runId): array {
         $path = $this->path($runId);
         if (!file_exists($path)) throw new RuntimeException("Run not found");
@@ -62,6 +71,7 @@ final class RunState {
         return json_decode($raw, true) ?: [];
     }
 
+    // Update the state of a run by its runId using a mutator function
     public function update(string $runId, callable $mutator): array {
         $path = $this->path($runId);
         $fh = fopen($path, 'c+');

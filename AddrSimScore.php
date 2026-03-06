@@ -89,8 +89,57 @@ final class AddrSimScore
         return $s;
     }
 
+    static function extract_state_zip(string $s): array
+    {
+        // Look for a state abbreviation followed by a zip code at the end of the string
+        if (preg_match('/\b([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b/', $s, $matches)) {
+            return [
+                'state' => $matches[1],
+                'zip' => $matches[2] 
+            ];
+        }
+        return ['state' => '', 'zip' => ''];
+    }
+
+    static function stateAndZipCompareString(string $a, string $b): string
+    {
+        $compareString = "";    
+
+        $stateZipA = self::extract_state_zip($a);
+        $stateZipB = self::extract_state_zip($b);
+
+        if ( $stateZipA['state'] !== $stateZipB['state'] ) {
+            $compareString .= "_STATE";
+        }
+
+        if ( $stateZipA['zip'] !== $stateZipB['zip'] ) {
+            $compareString .= "_ZIP";
+        }
+
+        if ( $compareString !== "" ) {
+
+            // strip off the leading underscore
+            $compareString = substr($compareString, 1) . "_MISMATCH";
+            
+        }
+
+        return $compareString;
+    }
+
     /**
-     * Similarity score in [0,1].
+     * Match assessment based on Levenshtein distance.
+     * Score is in [0,1] where 1 means identical and 0 means completely different.
+     * 
+     * returns:
+     * 
+     *  - EXACT_MATCH ( score == 1 )
+     *  - GOOD_MATCH ( states and zips match, score >= 0.9 )
+     *  - FAIR_MATCH ( states and zips match, score >= 0.75 )  
+     *  - POOR_MATCH ( states and zips match, score > 0 )
+     *  - NO_MATCH ( score == 0 )
+     *  - STATE_MISMATCH ( states do not match, score > 0 )
+     *  - ZIP_MISMATCH ( zips do not match, score > 0 )
+     *  - STATE_ZIP_MISMATCH ( states and zips do not match, score > 0 )
      */
     static function address_similarity(string $a, string $b, bool $stripUnit = true): array
     {
@@ -122,12 +171,16 @@ final class AddrSimScore
         if ($score < 0.0) $score = 0.0;
         if ($score > 1.0) $score = 1.0;
 
-        if ($score > 0.8) {
-            $matchResult = 'HIGH_SIMILARITY';
-        } else if ($score > 0.5) {
-            $matchResult = 'MEDIUM_SIMILARITY';
+        $stateZipMismatch = self::stateAndZipCompareString($na, $nb);
+
+        if ( $stateZipMismatch !== "" ) {
+            $matchResult = $stateZipMismatch;
+        } else if ($score >= 0.9) {
+            $matchResult = 'GOOD_MATCH';
+        } else if ($score >= 0.75) {
+            $matchResult = 'FAIR_MATCH';
         } else {
-            $matchResult = 'LOW_SIMILARITY';
+            $matchResult = 'POOR_MATCH';
         }
 
         return array_merge($retObj, [

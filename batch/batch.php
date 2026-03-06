@@ -16,7 +16,7 @@ $batchApiRequirements  = $module->getApiRequirements("BWH-00133");
 
 $module->initializeJavascriptModuleObject();
 
-//$redcap_csrf_token = $module->getCSRFToken();
+$redcap_csrf_token = $module->getCSRFToken();
 
 use REDCap;
 use HtmlPage;
@@ -33,25 +33,14 @@ exit();
 ?>
 
 <script>
-
-    const module = ExternalModules.Vanderbilt.CensusExternalModule;
-
-    const startUrl = <?php echo json_encode($module->getUrl('batch/api/start.php')); ?>;
-    const stopUrl = <?php echo json_encode($module->getUrl('batch/api/stop.php')); ?>;
-    const processUrl = <?php echo json_encode($module->getUrl('batch/api/process.php')); ?>;
-    const stopBeaconUrl = <?php echo json_encode($module->getUrl('batch/api/stop_beacon.php')); ?>;
-    const project_id = <?php echo json_encode($project_id); ?>;
-
-    console.log("Batch module JS initialized. API endpoints:", { startUrl, stopUrl, processUrl, stopBeaconUrl });
-
-    const record_list = [];
-
-    $(document).ready(function() {
-        // do something on load
-    });
 </script>
 
 <style>
+
+    table.geocoder-table * {
+        padding-top: 5px;
+        padding-bottom: 5px;
+    }
 
     #status {
         height: 30px;
@@ -114,7 +103,7 @@ exit();
 
             <h6>Configuration</h6>
 
-            <table class="table table-bordered">
+            <table class="table table-bordered geocoder-table">
                 <tr>
                     <th>Field Name</th>
                     <th>Value</th>
@@ -159,40 +148,19 @@ exit();
             </table>
         </div>
         <div class="col-sm-6">
-            <table class="table table-bordered">
 
-                <h6>Progress Summary</h6>
+            <h6>Progress Summary</h6>
 
+            <table class="table table-bordered geocoder-table" id="match-result-table">
+                <thead>
                 <tr>
                     <th>Match Result</th>
                     <th>Count</th>
                     <th>Percentage</th>
                 </tr>
-                <tr>
-                    <td>Exact</td>
-                    <td id="countExact">-</td>
-                    <td id="pctExact">-</td>
-                </tr>
-                <tr>
-                    <td>Inexact</td>
-                    <td id="countInexact">-</td>
-                    <td id="pctInexact">-</td>
-                </tr>
-                <tr>
-                    <td>Open/No Match</td>
-                    <td id="countNoMatch">-</td>
-                    <td id="pctNoMatch">-</td>
-                </tr>
-                <tr>
-                    <td>Closed/No Match</td>
-                    <td id="countClosedNoMatch">-</td>
-                    <td id="pctNoMatch">-</td>
-                </tr>
-                <tr>
-                    <td>Total</td>
-                    <td id="countTotal">-</td>
-                    <td id="pctTotal">-</td>
-                </tr>
+                </thead>
+                <tbody>
+                </tbody>
             </table>
         </div>
     </div>
@@ -204,11 +172,28 @@ exit();
 
     <div id="status"></div>
 
-    <div id="log" class="yes3-scrolling-container" style="max-height: 300px; height: 300px;"></div>
+    <div id="log" class="yes3-scrolling-container" style="max-height: 200px; height: 200px;"></div>
 
 </div>
 
 <script>
+        
+    $(function() {
+
+    const module = ExternalModules.Vanderbilt.CensusExternalModule;
+    const project_id = <?php echo json_encode($project_id); ?>;
+    const csrf_token = <?php echo json_encode($redcap_csrf_token); ?>;
+    const startUrl = <?php echo json_encode($module->getUrl('batch/api/start.php')); ?>;
+    const stopUrl = <?php echo json_encode($module->getUrl('batch/api/stop.php')); ?>;
+    let processUrl = <?php echo json_encode($module->getUrl('batch/api/process.php')); ?>;
+    const stopBeaconUrl = <?php echo json_encode($module->getUrl('batch/api/stop_beacon.php')); ?>;
+
+    // add get parms to processUrl
+    //processUrl += `?pid=${project_id}`;
+
+    console.log("Batch module JS initialized. API endpoints:", { startUrl, stopUrl, processUrl, stopBeaconUrl });
+
+    const record_list = [];
 
     let timeStarted;
         
@@ -231,7 +216,7 @@ exit();
         ui.status.textContent = `${s} (Elapsed: ${elapsed}s)`;
     }
 
-    async function postFormData(url, body, { signal } = {}) {
+    async function postFormData(url, body, { signal } = {}, reqId = crypto.randomUUID()) {
 
         const fd = new FormData();
 
@@ -241,10 +226,15 @@ exit();
 
         fd.append('redcap_csrf_token', redcap_csrf_token);
 
+        console.log('Posting to', url, 'with body', Object.fromEntries(fd.entries()), 'and reqId', reqId);
+
         const res = await fetch(url, {
             method: "POST",
             cache: "no-store",
             credentials: "same-origin",
+            headers: {
+                "X-Request-Id": reqId,
+            },
             body: fd,
             signal
         });
@@ -385,17 +375,21 @@ exit();
 
                     console.log(`Worker ${workerId} processing item ${itemId}...`);
 
-                    const thisProcessUrl = processUrl + `?X=${crypto.randomUUID()}`;
+                    const reqId = crypto.randomUUID(); // for tracing/logging
+
+                    const thisProcessUrl = processUrl + `&xri=${reqId}`;
 
                     // call the API to process the item, save results to server, etc.
-                    const r = await postFormData(thisProcessUrl, { runId: runId, itemId: itemId, project_id: project_id }, { signal: controller.signal });
+                    const r = await postFormData(thisProcessUrl, { runId: runId, itemId: itemId, project_id: project_id }, { signal: controller.signal }, reqId);
 
                     console.log(`Worker ${workerId} processed item ${itemId}: r=`, r);
 
                     done++;
 
+                    const matchResult = r?.api_result?.matchResult ?? "unknown";
+
                     // Log progress
-                    logLine(`[W${workerId}] OK record=${itemId}, matchResult=${r.api_result['matchResult']} (${done}/${itemIds.length})`);
+                    logLine(`[W${workerId}] OK record=${itemId}, matchResult=${matchResult} (${done}/${itemIds.length})`);
 
                     // If server indicates run stopped, honor it
                     if (r.runStatus && r.runStatus !== "running") {
@@ -429,6 +423,8 @@ exit();
         const workers = Array.from({ length: concurrency }, (_, i) => worker(i + 1));
 
         await Promise.allSettled(workers);
+
+        renderMatchResultTable();
 
         if (!stopped) {
 
@@ -476,6 +472,43 @@ exit();
         // const concurrency = 6; // make user-selectable
         // await runBatch({ itemIds, concurrency });
     };
+
+    /**
+     * match result table
+     */
+
+    function renderMatchResultTable() {
+
+        module.ajax('getMatchResultTable', {}).then(result => {
+
+            console.log('Match result table:', result);
+
+            const $table = $('table#match-result-table');
+
+            const $tbody = $table.find('tbody');
+
+            $tbody.empty();
+
+            for (const row of result) {
+
+                const tr = `<tr>
+                    <td>${row.match_result}</td>
+                    <td>${row.match_result_count}</td>
+                    <td>${row.pct_of_total}%</td>
+                </tr>`;
+
+                $tbody.append(tr);
+            }
+
+        }).catch(err => {   
+
+            console.error('Error fetching match result table:', err);
+        });
+
+    }
+
+        renderMatchResultTable();
+    })
 
 </script>
 
